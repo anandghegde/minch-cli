@@ -1,5 +1,5 @@
-import { XMLParser } from "fast-xml-parser";
-import { fetchResilient, HttpError, USER_AGENT } from "../util/net";
+import { applyLimit, parseRssItems, runProbe, toUnixSeconds } from "./adapter";
+import { fetchText } from "../util/net";
 import { infoHashFromMagnet, buildMagnet, normalizeInfoHash } from "./magnet";
 import { cleanText } from "../util/format";
 import type { SearchOptions, Source, TestResult, TorrentResult } from "./types";
@@ -14,11 +14,6 @@ export interface TorznabConfig {
   apiKey?: string;
   categories?: string;
 }
-
-const parser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: "@_",
-});
 
 interface TorznabItem {
   title?: string;
@@ -38,13 +33,7 @@ function attr(item: TorznabItem, name: string): string | undefined {
 }
 
 function toResults(xml: string, cfg: TorznabConfig): TorrentResult[] {
-  const doc = parser.parse(xml);
-  const rawItems = doc?.rss?.channel?.item;
-  const items: TorznabItem[] = Array.isArray(rawItems)
-    ? rawItems
-    : rawItems
-      ? [rawItems]
-      : [];
+  const items = parseRssItems(xml) as TorznabItem[];
   const out: TorrentResult[] = [];
   for (const it of items) {
     const name = cleanText(String(it.title ?? ""));
@@ -74,7 +63,7 @@ function toResults(xml: string, cfg: TorznabConfig): TorrentResult[] {
       sourceLabel: cfg.name,
       magnet,
       downloadUrl,
-      added: it.pubDate ? new Date(String(it.pubDate)).getTime() / 1000 : undefined,
+      added: toUnixSeconds(it.pubDate),
     });
   }
   return out;
@@ -91,16 +80,6 @@ function buildUrl(cfg: TorznabConfig, params: Record<string, string>): string {
   return u.href;
 }
 
-async function fetchXml(url: string, opts: SearchOptions): Promise<string> {
-  const res = await fetchResilient(url, {
-    headers: { "User-Agent": USER_AGENT },
-    signal: opts.signal,
-    retries: 1,
-  });
-  if (!res.ok) throw new HttpError(res.status, `Torznab returned ${res.status}`);
-  return res.text();
-}
-
 export function createTorznabSource(cfg: TorznabConfig): Source {
   async function search(
     query: string,
@@ -108,37 +87,20 @@ export function createTorznabSource(cfg: TorznabConfig): Source {
   ): Promise<TorrentResult[]> {
     const q = query.trim();
     const url = buildUrl(cfg, q ? { t: "search", q } : { t: "search" });
-    const out = toResults(await fetchXml(url, opts), cfg);
-    return typeof opts.limit === "number" ? out.slice(0, opts.limit) : out;
+    const out = toResults(await fetchText(url, { signal: opts.signal, retries: 1 }), cfg);
+    return applyLimit(out, opts);
   }
 
   async function test(opts: SearchOptions = {}): Promise<TestResult> {
-    const started = Date.now();
-    try {
+    return runProbe(opts, async () => {
       // Use caps first (cheap), then a tiny search to confirm parsing.
-      const capsUrl = buildUrl(cfg, { t: "caps" });
-      await fetchXml(capsUrl, opts);
+      await fetchText(buildUrl(cfg, { t: "caps" }), { signal: opts.signal, retries: 1 });
       const out = toResults(
-        await fetchXml(buildUrl(cfg, { t: "search" }), opts),
+        await fetchText(buildUrl(cfg, { t: "search" }), { signal: opts.signal, retries: 1 }),
         cfg,
       );
-      return {
-        ok: true,
-        status: `${out.length} results`,
-        latency: Date.now() - started,
-        count: out.length,
-      };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return {
-        ok: false,
-        status: msg,
-        latency: Date.now() - started,
-        code: opts.signal?.aborted
-          ? "timed out"
-          : /HTTP \d+/.exec(msg)?.[0] ?? "no response",
-      };
-    }
+      return { count: out.length, ok: true };
+    });
   }
 
   return {

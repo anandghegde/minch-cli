@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { errorToCode } from "../../sources/adapter";
 import { cachedSearch } from "../../sources/cache";
 import { dedupe, defaultOrder } from "../../sources/search";
-import { HttpError } from "../../util/net";
 import { mapPool } from "../../util/concurrency";
 import type { Source, TorrentResult } from "../../sources/types";
 
@@ -28,12 +28,6 @@ type SourceOutcome =
 const PER_SOURCE_TIMEOUT_MS = 20_000;
 // Bound simultaneous requests so 50+ enabled sources don't all fire at once.
 const SEARCH_CONCURRENCY = 12;
-
-function errorCode(e: unknown, timedOut: boolean): string {
-  if (timedOut) return "timed out";
-  if (e instanceof HttpError && e.status > 0) return `HTTP ${e.status}`;
-  return "no response";
-}
 
 function idle(total: number): ConcurrentSearchState {
   return { results: [], perSource: {}, loading: false, done: 0, total };
@@ -99,7 +93,7 @@ export function useConcurrentSearch(
         return {
           ok: false,
           error: timedOut ? "timed out" : e instanceof Error ? e.message : String(e),
-          code: errorCode(e, timedOut),
+          code: errorToCode(e, timedOut),
         };
       } finally {
         clearTimeout(timer);

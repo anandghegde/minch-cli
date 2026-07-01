@@ -1,0 +1,23 @@
+Phase 3 (B2) — sources adapter toolkit
+Problem
+The 6 source adapters (apibay, nyaa, yts, solidtorrents, torznab, cardigann/source.ts) re-implement the same fetch / test-envelope / limit / date / RSS skeletons. The error→code mapping round-trips the structured HttpError.status through a /HTTP \d+/ regex on the message string — fragile and duplicated 5× (apibay.ts:98, nyaa.ts:93, yts.ts:106, solidtorrents.ts:113, torznab.ts:139) plus a variant in cardigann/source.ts:83. Goal per refactoring-oppty.md §B2: extract a shared toolkit so adapters keep only provider-specific parsing, and use HttpError.status directly.
+Current state
+Each adapter hand-rolls a fetch+ok-check (apibay:50, nyaa:58, torznab:94), a multi-host fallback loop (yts:30-45, solidtorrents:30-51), the opts.limit slice (5 copies), new XMLParser + RSS channel.item extraction (nyaa:12-33, torznab:18-47), date→unix-seconds (nyaa:51, torznab:77, solidtorrents:59-61), and the test() try/catch envelope (6 copies).
+fetchText already exists in util/net.ts:132 but is unused by adapters; there is no fetchJson sibling.
+useConcurrentSearch.ts:32-36 already has a structured errorCode(e, timedOut); health.ts:37 uses a generic "error"/"timed out". Both should share one helper.
+Behavior pinned by tests: solidtorrents.test.ts:68 (exact baseUrl-override URL https://mirror.test/api/v1/search?q=x&sort=seeders), plus limit, test() ok/fail code; health.test.ts, registry.test.ts, search.test.ts. No per-adapter tests exist for apibay/nyaa/yts/torznab.
+Proposed changes
+New module src/sources/adapter.ts
+Pure helpers: errorToCode(e, aborted) (abort→"timed out", HttpError→HTTP {status}, else "no response"); applyLimit(rows, opts); toUnixSeconds(value) (date string/number → floored unix seconds, undefined on NaN — also fixes the NaN-added smell at nyaa:51/torznab:77); parseRssItems(xml) (one shared XMLParser + RSS channel.item extraction); makeResult(source, row) (injects source/sourceLabel so each adapter's id/label is defined once and reused in the Source descriptor). Fetch helpers: fetchJson<T>(url, opts) and fetchFirstOk<T>(urls, opts, parse) (multi-host fallback returning the first ok parsed body, abort-aware). Probe helper: runProbe(opts, body) wrapping the try/catch envelope, computing latency, and mapping failures via errorToCode.
+Migrate the 6 adapters
+apibay → fetchJson + applyLimit + runProbe + makeResult. nyaa → fetchText (util/net) + parseRssItems + toUnixSeconds + applyLimit + runProbe + makeResult. yts → fetchFirstOk + applyLimit + runProbe + makeResult. solidtorrents → fetchFirstOk + toUnixSeconds + applyLimit + runProbe + makeResult (preserve the baseUrl-override URL shape exactly for solidtorrents.test.ts:68). torznab → fetchText + parseRssItems + toUnixSeconds + applyLimit + runProbe (keep torznab-specific attr/buildUrl). cardigann/source.ts → applyLimit + runProbe + errorToCode (keep toTorrentResults). Each adapter defines {id,label} once and reuses it in both makeResult and the exported Source descriptor.
+Collapse error→code to one place
+health.ts:37 and useConcurrentSearch.ts:32-36 both call the shared errorToCode; remove the local errorCode in useConcurrentSearch. Net: one error→code mapping for the whole search path. Minor normalization: solidtorrents' non-HTTP-status codes (e.g. "404") become "HTTP 404" — more consistent and untested.
+Tests
+Add test/adapter.test.ts unit-testing every helper: errorToCode (HttpError statuses, abort, non-HttpError), applyLimit, toUnixSeconds (valid/invalid/NaN/number), parseRssItems (array/single/empty), fetchJson (ok + non-ok), fetchFirstOk (first ok, fallback to later host, all-fail throws, abort rethrows), runProbe (success adds latency, catch maps code via errorToCode), makeResult. Keep all 163 existing tests green.
+Validation & annotation
+After migration run npm run typecheck and npm run test and fix any regressions. Then annotate phase 3 Status: complete. in refactoring-oppty.md with bullets naming adapter.ts, the migrated adapters, and the collapsed error→code. No commit unless explicitly asked.
+Out of scope
+Phase 5 (B3 App.tsx hook extraction) begins after this lands. The other "Smaller correctness smells" (reResolve abort signal, cancel emit, filters.split charAt, TorBox NaN body, nyaa/torznab date NaN) are not part of B2 except the NaN-date fix that falls out of toUnixSeconds.
+Orchestration
+Decision: no child agents. B2 is a sequential refactor whose whole point is consistency of one shared helper API, so a single stream (me) migrating the adapters in order is safer than fanning out; the files are small and the design must stay coherent across all of them.

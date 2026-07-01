@@ -1,4 +1,5 @@
 import type { SourceHealth } from "../config/config";
+import { errorToCode } from "./adapter";
 import type { Source } from "./types";
 import { mapPool } from "../util/concurrency";
 
@@ -34,7 +35,7 @@ async function probeMirror(
     return {
       ok: false,
       status: msg,
-      code: ctrl.signal.aborted ? "timed out" : "error",
+      code: errorToCode(e, ctrl.signal.aborted),
       testedAt: Date.now(),
     };
   } finally {

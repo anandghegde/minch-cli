@@ -1,4 +1,4 @@
-import { fetchResilient, HttpError, USER_AGENT } from "../util/net";
+import { applyLimit, fetchJson, makeResult, runProbe, type SourceIdentity } from "./adapter";
 import { buildMagnet } from "./magnet";
 import type { SearchOptions, Source, TestResult, TorrentResult } from "./types";
 
@@ -28,7 +28,9 @@ const CAT_LABELS: Record<string, string> = {
   "6": "Other",
 };
 
-function toResult(it: ApibayItem): TorrentResult | null {
+const SRC: SourceIdentity = { id: "thepiratebay", label: "The Pirate Bay" };
+
+function toResult(it: ApibayItem): Omit<TorrentResult, "source" | "sourceLabel"> | null {
   const infoHash = (it.info_hash ?? "").toLowerCase();
   if (!infoHash || infoHash === ZERO_HASH || it.id === "0") return null;
   const name = it.name || "Unknown";
@@ -39,23 +41,10 @@ function toResult(it: ApibayItem): TorrentResult | null {
     sizeBytes: Number(it.size) || 0,
     seeders: Number(it.seeders) || 0,
     leechers: Number(it.leechers) || 0,
-    source: "thepiratebay",
-    sourceLabel: "The Pirate Bay",
     magnet: buildMagnet(infoHash, name),
     added: Number(it.added) || undefined,
     category: CAT_LABELS[catHead],
   };
-}
-
-async function fetchItems(url: string, opts: SearchOptions): Promise<ApibayItem[]> {
-  const res = await fetchResilient(url, {
-    headers: { "User-Agent": USER_AGENT },
-    signal: opts.signal,
-    retries: 1,
-  });
-  if (!res.ok) throw new HttpError(res.status, `Pirate Bay returned ${res.status}`);
-  const json = (await res.json()) as ApibayItem[];
-  return Array.isArray(json) ? json : [];
 }
 
 async function search(
@@ -66,43 +55,30 @@ async function search(
   const url = q
     ? `${API}/q.php?q=${encodeURIComponent(q)}`
     : `${API}/precompiled/data_top100_207.json`;
-  const items = await fetchItems(url, opts);
+  const items = await fetchJson<ApibayItem[]>(url, opts);
+  const rows = Array.isArray(items) ? items : [];
   const out: TorrentResult[] = [];
-  for (const it of items) {
+  for (const it of rows) {
     const r = toResult(it);
-    if (r) out.push(r);
+    if (r) out.push(makeResult(SRC, r));
   }
-  return typeof opts.limit === "number" ? out.slice(0, opts.limit) : out;
+  return applyLimit(out, opts);
 }
 
 async function test(opts: SearchOptions = {}): Promise<TestResult> {
-  const started = Date.now();
-  try {
-    const items = await fetchItems(
+  return runProbe(opts, async () => {
+    const items = await fetchJson<ApibayItem[]>(
       `${API}/precompiled/data_top100_207.json`,
       opts,
     );
-    const latency = Date.now() - started;
-    return {
-      ok: items.length > 0,
-      status: items.length > 0 ? `${items.length} results` : "no results",
-      latency,
-      count: items.length,
-    };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return {
-      ok: false,
-      status: msg,
-      latency: Date.now() - started,
-      code: opts.signal?.aborted ? "timed out" : /HTTP \d+/.exec(msg)?.[0] ?? "no response",
-    };
-  }
+    const rows = Array.isArray(items) ? items : [];
+    return { count: rows.length };
+  });
 }
 
 export const thepiratebay: Source = {
-  id: "thepiratebay",
-  label: "The Pirate Bay",
+  id: SRC.id,
+  label: SRC.label,
   kind: "api",
   links: [API],
   requiresConfig: false,

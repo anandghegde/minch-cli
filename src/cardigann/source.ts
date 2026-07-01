@@ -1,3 +1,4 @@
+import { applyLimit, runProbe } from "../sources/adapter";
 import { executeSearch } from "./executor";
 import { definitionRequiresConfig } from "./loader";
 import type { CardigannDefinition } from "./model";
@@ -54,35 +55,16 @@ export function createCardigannSource(
   ): Promise<TorrentResult[]> {
     const base = opts.baseUrl ?? getBaseUrl();
     const raw = await executeSearch(def, query, base, { signal: opts.signal });
-    const results = toTorrentResults(def, raw);
-    return typeof opts.limit === "number"
-      ? results.slice(0, opts.limit)
-      : results;
+    return applyLimit(toTorrentResults(def, raw), opts);
   }
 
   async function test(
     opts: SearchOptions & { baseUrl?: string } = {},
   ): Promise<TestResult> {
-    const started = Date.now();
-    try {
+    return runProbe(opts, async () => {
       const results = await search(PROBE_QUERY, { ...opts, limit: 25 });
-      const latency = Date.now() - started;
-      return {
-        ok: results.length > 0,
-        status: results.length > 0 ? `${results.length} results` : "no results",
-        latency,
-        count: results.length,
-        code: results.length > 0 ? undefined : "empty",
-      };
-    } catch (e) {
-      const latency = Date.now() - started;
-      const aborted = opts.signal?.aborted;
-      const msg = e instanceof Error ? e.message : String(e);
-      const code = aborted
-        ? "timed out"
-        : /HTTP (\d+)/.exec(msg)?.[0] ?? "no response";
-      return { ok: false, status: msg, latency, code };
-    }
+      return { count: results.length, code: results.length > 0 ? undefined : "empty" };
+    });
   }
 
   return {

@@ -60,8 +60,22 @@ D. Minor (high-signal subset)
 - dates.ts: mult map rebuilt per loop iteration (:33-41); two sources of truth for the Go token set (:48-68 vs :80-81); global regexes used for stateless .test() requiring lastIndex=0 resets (:88-89).
 E. Suggested order
 1. Bugs A1–A5 (correctness; small, contained patches).
+   - Status: complete.
+   - A1: download/manager.ts — input stored per-entry (inputs Map); pump() resolves each queued id's own input, so a freed concurrency slot no longer runs the next queued download against the finishing download's input.
+   - A2: ui/App.tsx — during the first-run probe (config still null) Splash renders directly with progress/rows/cols, so per-source probe progress shows instead of a bare spinner.
+   - A3: download/accelerator.ts — segmented path wraps fh in try/finally so fh.close() runs on every exit (success, fatal, abort, size mismatch, rename failure).
+   - A4: download/accelerator.ts — chunk bytes are fh.sync()'d before the chunk is recorded complete in the sidecar, closing the crash-window that recorded a chunk done while its bytes were lost.
+   - A5: sources/cache.ts — cache key now includes baseUrl and limit, so a different mirror or a limit:10 call no longer poisons a later unlimited call.
 2. B1 debrid base + B5 provider descriptor (kills the most duplication, makes adding providers a one-file change).
+   - Status: complete.
+   - B1: src/debrid/base.ts createDebridBase({ provider, baseUrl, kindForStatus, … }) hosts the shared fetch/auth/backoff/error-translation; realdebrid.ts and torbox.ts consume it and keep only provider-specific envelope parsing + status/kind mapping.
+   - B5: src/debrid/descriptor.ts DEBRID_DESCRIPTORS table { id, label, envVar, read, write, coerce } is the single source of truth for per-provider config knowledge, consumed by keys.ts and config.ts coerce — adding a provider is one descriptor entry + one builder.
 3. B2 sources adapter toolkit (50-60% adapter shrink; also fixes the error-code regex fragility).
+   - Status: complete.
+   - src/sources/adapter.ts: shared toolkit — errorToCode, applyLimit, toUnixSeconds, parseRssItems, makeResult, fetchJson, fetchFirstOk, runProbe; the six adapters now keep only provider-specific parsing.
+   - Migrated apibay (fetchJson+makeResult), nyaa (fetchText+parseRssItems+toUnixSeconds), yts (fetchFirstOk), solidtorrents (fetchFirstOk+toUnixSeconds, baseUrl-override URL preserved), torznab (fetchText+parseRssItems, keeps attr/buildUrl), and cardigann/source.ts (applyLimit+runProbe, keeps toTorrentResults); each native adapter defines {id,label} once via makeResult + the Source descriptor.
+   - Collapsed the error→code mapping to one place: health.ts and useConcurrentSearch.ts both call adapter.errorToCode (removed the local errorCode); the /HTTP \d+/ message regex is gone — HttpError.status is used directly. toUnixSeconds also fixes the NaN-added smell on unparseable nyaa/torznab pubDates.
+   - test/adapter.test.ts unit-tests every helper (28 tests); full suite green (191 tests) and typecheck clean.
 4. C executor decomposition + the mapPool util shared with B4 (unlocks unit tests for the riskiest parsing/concurrency code).
    - Status: complete.
    - executor.ts: SelectorEngine strategy (html/xml/json) + single processRow/parseResults row loop; executeSearch split into buildSearchHeaders/fetchSearchPage/selectEngine; resolveDownloadInfohashes via mapPool; parseHtmlResults/parseJsonResults kept as deprecated wrappers.

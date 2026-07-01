@@ -1,5 +1,5 @@
-import { XMLParser } from "fast-xml-parser";
-import { fetchResilient, HttpError, USER_AGENT } from "../util/net";
+import { applyLimit, makeResult, parseRssItems, runProbe, toUnixSeconds, type SourceIdentity } from "./adapter";
+import { fetchText } from "../util/net";
 import { buildMagnet } from "./magnet";
 import { parseSize } from "../util/format";
 import { cleanText } from "../util/format";
@@ -9,10 +9,7 @@ import type { SearchOptions, Source, TestResult, TorrentResult } from "./types";
 // with infoHash/seeders/leechers/size, so no scraping required).
 const BASE = "https://nyaa.si/";
 
-const parser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: "@_",
-});
+const SRC: SourceIdentity = { id: "nyaa", label: "Nyaa" };
 
 interface NyaaItem {
   title?: string;
@@ -24,13 +21,7 @@ interface NyaaItem {
 }
 
 function toResults(xml: string): TorrentResult[] {
-  const doc = parser.parse(xml);
-  const rawItems = doc?.rss?.channel?.item;
-  const items: NyaaItem[] = Array.isArray(rawItems)
-    ? rawItems
-    : rawItems
-      ? [rawItems]
-      : [];
+  const items = parseRssItems(xml) as NyaaItem[];
   const out: TorrentResult[] = [];
   for (const it of items) {
     const infoHash = String(it["nyaa:infoHash"] ?? "").toLowerCase();
@@ -38,66 +29,45 @@ function toResults(xml: string): TorrentResult[] {
     if (!infoHash || !name) continue;
     const seeders = Number(it["nyaa:seeders"]);
     const leechers = Number(it["nyaa:leechers"]);
-    const dateStr = it.pubDate ? String(it.pubDate) : "";
-    out.push({
-      infoHash,
-      name,
-      sizeBytes: parseSize(String(it["nyaa:size"] ?? "")),
-      seeders: Number.isFinite(seeders) ? seeders : 0,
-      leechers: Number.isFinite(leechers) ? leechers : 0,
-      source: "nyaa",
-      sourceLabel: "Nyaa",
-      magnet: buildMagnet(infoHash, name),
-      added: dateStr ? new Date(dateStr).getTime() / 1000 : undefined,
-      category: "Anime",
-    });
+    out.push(
+      makeResult(SRC, {
+        infoHash,
+        name,
+        sizeBytes: parseSize(String(it["nyaa:size"] ?? "")),
+        seeders: Number.isFinite(seeders) ? seeders : 0,
+        leechers: Number.isFinite(leechers) ? leechers : 0,
+        magnet: buildMagnet(infoHash, name),
+        added: toUnixSeconds(it.pubDate),
+        category: "Anime",
+      }),
+    );
   }
   return out;
 }
 
-async function fetchFeed(q: string, opts: SearchOptions): Promise<string> {
+function feedUrl(q: string): string {
   const params = new URLSearchParams({ page: "rss", q, c: "0_0", f: "0" });
-  const res = await fetchResilient(`${BASE}?${params.toString()}`, {
-    headers: { "User-Agent": USER_AGENT },
-    signal: opts.signal,
-    retries: 1,
-  });
-  if (!res.ok) throw new HttpError(res.status, `Nyaa returned ${res.status}`);
-  return res.text();
+  return `${BASE}?${params.toString()}`;
 }
 
 async function search(
   query: string,
   opts: SearchOptions = {},
 ): Promise<TorrentResult[]> {
-  const out = toResults(await fetchFeed(query.trim(), opts));
-  return typeof opts.limit === "number" ? out.slice(0, opts.limit) : out;
+  const out = toResults(await fetchText(feedUrl(query.trim()), { signal: opts.signal, retries: 1 }));
+  return applyLimit(out, opts);
 }
 
 async function test(opts: SearchOptions = {}): Promise<TestResult> {
-  const started = Date.now();
-  try {
-    const out = toResults(await fetchFeed("", opts));
-    return {
-      ok: out.length > 0,
-      status: out.length > 0 ? `${out.length} results` : "no results",
-      latency: Date.now() - started,
-      count: out.length,
-    };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return {
-      ok: false,
-      status: msg,
-      latency: Date.now() - started,
-      code: opts.signal?.aborted ? "timed out" : /HTTP \d+/.exec(msg)?.[0] ?? "no response",
-    };
-  }
+  return runProbe(opts, async () => {
+    const out = toResults(await fetchText(feedUrl(""), { signal: opts.signal, retries: 1 }));
+    return { count: out.length };
+  });
 }
 
 export const nyaa: Source = {
-  id: "nyaa",
-  label: "Nyaa",
+  id: SRC.id,
+  label: SRC.label,
   kind: "rss",
   links: [BASE],
   requiresConfig: false,
