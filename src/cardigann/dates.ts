@@ -16,6 +16,13 @@ function clean(s: string): string {
 /** "5 hours ago", "2 days ago", "yesterday", "10 minutes ago", "just now". */
 export function fromTimeAgo(input: string): number | null {
   const s = input.toLowerCase().trim();
+  // Several bundled definitions (1337x and ~7 others) use a bare "now" as the
+  // {{ else }} fallback when none of their date selectors matched a row. That
+  // sentinel is not a real publish time — parse it as unknown so the row is
+  // honestly undated instead of being stamped "right now", which let genuinely
+  // old torrents bypass the date filter. Real "just now"/"moments ago" below
+  // still resolve to the current time.
+  if (s === "now") return null;
   const now = Date.now();
   if (/just now|now|moments? ago/.test(s)) return Math.floor(now / 1000);
   if (/yesterday/.test(s)) return Math.floor((now - 86400_000) / 1000);
