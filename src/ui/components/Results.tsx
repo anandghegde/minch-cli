@@ -5,7 +5,7 @@ import { useConcurrentSearch } from "../hooks/useConcurrentSearch";
 import { activeMirror, isEnabled } from "../../sources/registry";
 import { sortResults, sortLabel } from "../../sources/search";
 import { applyFilters, filterSummary } from "../../sources/filters";
-import { formatBytes, truncate, cleanText } from "../../util/format";
+import { formatBytes, formatRelative, truncate, cleanText } from "../../util/format";
 import type { TorrentResult } from "../../sources/types";
 import { COLOR, ICON } from "../theme";
 import { Spinner } from "./Spinner";
@@ -116,7 +116,10 @@ export function Results({ active }: { active: boolean }) {
   const failed = Object.entries(search.perSource).filter(([, st]) => st.error);
   const start = Math.max(0, Math.min(cursor - Math.floor(listRows / 2), Math.max(0, results.length - listRows)));
   const visible = results.slice(start, start + listRows);
-  const nameW = Math.max(20, cols - 40);
+  // Fixed columns: pointer(2) + seeders(6) + size(11) + date(9) + source(10)
+  // = 38, plus 2px outer padding. Reserve them so the name column truncates
+  // instead of pushing the trailing columns off-screen.
+  const nameW = Math.max(20, cols - 49);
 
   return (
     <Box flexDirection="column" flexGrow={1}>
@@ -181,6 +184,9 @@ export function Results({ active }: { active: boolean }) {
                 </Box>
                 <Box width={11} justifyContent="flex-end">
                   <Text color={COLOR.alt}> {formatBytes(r.sizeBytes)}</Text>
+                </Box>
+                <Box width={9} justifyContent="flex-end">
+                  <Text color={COLOR.dim}> {formatRelative(r.added)}</Text>
                 </Box>
                 <Box width={10} justifyContent="flex-end">
                   <Text color={COLOR.dim}> {truncate(r.sourceLabel ?? r.source, 9)}</Text>
