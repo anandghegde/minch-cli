@@ -149,15 +149,14 @@ function asDownloadBlock(raw: unknown): CardigannDownloadBlock | undefined {
 }
 
 /**
- * Parse a Cardigann YAML string into the typed model, rejecting definitions
- * that require features outside the public, no-auth subset.
+ * Reject definitions that require features outside the public, no-auth subset.
+ * Throws the first UnsupportedDefinitionError encountered; returns the parsed
+ * record otherwise so the caller can continue building the typed model.
  */
-export function loadDefinition(yaml: string): CardigannDefinition {
-  const raw = parseYaml(yaml) as Record<string, unknown> | null;
-  if (!raw || typeof raw !== "object") {
-    throw new UnsupportedDefinitionError("empty or invalid YAML");
-  }
-
+function assertSupported(raw: Record<string, unknown>): {
+  type: string;
+  links: string[];
+} {
   const type = String(raw.type ?? "");
   if (type !== "public") {
     throw new UnsupportedDefinitionError(
@@ -178,8 +177,19 @@ export function loadDefinition(yaml: string): CardigannDefinition {
   if (!raw.search) {
     throw new UnsupportedDefinitionError("definition has no search block");
   }
+  return { type, links };
+}
 
-  const def: CardigannDefinition = {
+/**
+ * Build the typed CardigannDefinition from an already-validated raw record.
+ * Pure mapping: no further validation throws here.
+ */
+function buildDefinition(
+  raw: Record<string, unknown>,
+  type: string,
+  links: string[],
+): CardigannDefinition {
+  return {
     id: String(raw.id ?? ""),
     name: String(raw.name ?? raw.id ?? "Unknown"),
     description: raw.description != null ? String(raw.description) : undefined,
@@ -226,11 +236,19 @@ export function loadDefinition(yaml: string): CardigannDefinition {
     search: asSearch(raw.search),
     download: asDownloadBlock(raw.download),
   };
+}
 
-  // A definition that needs a credential-type setting (apikey/cookie/password)
-  // is out of the zero-config public scope; flag via requiresConfig later, but
-  // reject anything that flat-out needs auth headers we don't support.
-  return def;
+/**
+ * Parse a Cardigann YAML string into the typed model, rejecting definitions
+ * that require features outside the public, no-auth subset.
+ */
+export function loadDefinition(yaml: string): CardigannDefinition {
+  const raw = parseYaml(yaml) as Record<string, unknown> | null;
+  if (!raw || typeof raw !== "object") {
+    throw new UnsupportedDefinitionError("empty or invalid YAML");
+  }
+  const { type, links } = assertSupported(raw);
+  return buildDefinition(raw, type, links);
 }
 
 /** True if a setting field implies the source needs user-provided secrets. */

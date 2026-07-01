@@ -16,11 +16,167 @@ function arg(args: CardigannFilter["args"], i = 0): string {
 }
 
 function dateToString(unix: number | null): string {
-  // Emit an RFC-ish string the downstream `date` field parser re-reads; using
-  // ISO keeps it round-trippable through Date.parse.
   return unix != null ? new Date(unix * 1000).toISOString() : "";
 }
 
+/**
+ * A single filter is a pure function: (current value, args, template vars) →
+ * next value. Throwing is reserved for genuine errors; expected "no match"
+ * outcomes are returned as empty string. Each entry is independently testable.
+ */
+type FilterFn = (
+  data: string,
+  args: CardigannFilter["args"],
+  vars: TemplateVars,
+) => string;
+
+const fQueryString: FilterFn = (data, args) => {
+  const param = arg(args);
+  try {
+    const u = new URL(data, "http://x/");
+    return u.searchParams.get(param) ?? "";
+  } catch {
+    const m = data.match(new RegExp(`[?&]${param}=([^&]*)`));
+    return m ? decodeURIComponent(m[1]!) : "";
+  }
+};
+
+const fDateParse: FilterFn = (data, args) => {
+  const layout = arg(args);
+  const unix = parseGoLayout(data, layout);
+  return dateToString(unix ?? fromUnknown(data));
+};
+
+const fRegexp: FilterFn = (data, args) => {
+  const pattern = arg(args);
+  try {
+    const m = new RegExp(pattern).exec(data);
+    return m ? (m[1] ?? "") : "";
+  } catch {
+    return "";
+  }
+};
+
+const fReReplace: FilterFn = (data, args, vars) => {
+  const pattern = arg(args, 0);
+  const repl = applyTemplate(arg(args, 1), vars);
+  try {
+    return data.replace(new RegExp(pattern, "g"), repl);
+  } catch {
+    return data;
+  }
+};
+
+const fSplit: FilterFn = (data, args) => {
+  const sep = arg(args, 0);
+  let pos = parseInt(arg(args, 1), 10);
+  const parts = data.split(sep.charAt(0) || sep);
+  if (pos < 0) pos += parts.length;
+  return parts[pos] ?? "";
+};
+
+const fReplace: FilterFn = (data, args, vars) => {
+  const from = arg(args, 0);
+  const to = applyTemplate(arg(args, 1), vars);
+  return data.split(from).join(to);
+};
+
+const fTrim: FilterFn = (data, args) => {
+  const cutset = arg(args);
+  if (cutset) {
+    const c = cutset.charAt(0);
+    let out = data;
+    while (out.startsWith(c)) out = out.slice(1);
+    while (out.endsWith(c)) out = out.slice(0, -1);
+    return out;
+  }
+  return data.trim();
+};
+
+const fPrepend: FilterFn = (data, args, vars) =>
+  applyTemplate(arg(args), vars) + data;
+
+const fAppend: FilterFn = (data, args, vars) =>
+  data + applyTemplate(arg(args), vars);
+
+const fToLower: FilterFn = (data) => data.toLowerCase();
+const fToUpper: FilterFn = (data) => data.toUpperCase();
+
+const fUrlDecode: FilterFn = (data) => {
+  try {
+    return decodeURIComponent(data.replace(/\+/g, " "));
+  } catch {
+    return data;
+  }
+};
+
+const fUrlEncode: FilterFn = (data) => encodeURIComponent(data);
+const fHtmlDecode: FilterFn = (data) => decodeEntities(data);
+
+const fHtmlEncode: FilterFn = (data) =>
+  data
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+const fTimeAgo: FilterFn = (data) => dateToString(fromTimeAgo(data));
+const fFuzzyTime: FilterFn = (data) => dateToString(fromUnknown(data));
+
+const fDiacritics: FilterFn = (data, args) => {
+  if (arg(args) === "replace") {
+    return data.normalize("NFD").replace(/[\u0300-\u036f]/g, "").normalize("NFC");
+  }
+  return data;
+};
+
+const VALIDATE_DELIMS = /[,\s/)(.;[\]"|:]+/;
+const fValidate: FilterFn = (data, args) => {
+  const valid = arg(args).toLowerCase().split(VALIDATE_DELIMS).filter(Boolean);
+  const have = data.toLowerCase().split(VALIDATE_DELIMS).filter(Boolean);
+  return valid.filter((v) => have.includes(v)).join(", ");
+};
+
+const fNoop: FilterFn = (data) => data;
+
+/**
+ * Filter registry: name → implementation. Aliases (dateparse/timeparse,
+ * timeago/reltime, hexdump/strdump/validfilename) map to the same fn. Lookup is
+ * O(1); unknown names fall through to the identity (matches Prowlarr's
+ * "log and continue"). Exposed so tests can exercise individual filters.
+ */
+export const FILTERS: Record<string, FilterFn> = {
+  querystring: fQueryString,
+  dateparse: fDateParse,
+  timeparse: fDateParse,
+  regexp: fRegexp,
+  re_replace: fReReplace,
+  split: fSplit,
+  replace: fReplace,
+  trim: fTrim,
+  prepend: fPrepend,
+  append: fAppend,
+  tolower: fToLower,
+  toupper: fToUpper,
+  urldecode: fUrlDecode,
+  urlencode: fUrlEncode,
+  htmldecode: fHtmlDecode,
+  htmlencode: fHtmlEncode,
+  timeago: fTimeAgo,
+  reltime: fTimeAgo,
+  fuzzytime: fFuzzyTime,
+  diacritics: fDiacritics,
+  validate: fValidate,
+  hexdump: fNoop,
+  strdump: fNoop,
+  validfilename: fNoop,
+};
+
+/**
+ * Apply a pipeline of filters in order. Each filter receives the previous one's
+ * output, so the composition is left-to-right as in Cardigann. Returns the
+ * input unchanged when there are no filters.
+ */
 export function applyFilters(
   input: string,
   filters: CardigannFilter[] | undefined,
@@ -28,134 +184,9 @@ export function applyFilters(
 ): string {
   if (!filters || filters.length === 0) return input;
   let data = input;
-
   for (const filter of filters) {
-    switch (filter.name) {
-      case "querystring": {
-        const param = arg(filter.args);
-        try {
-          const u = new URL(data, "http://x/");
-          data = u.searchParams.get(param) ?? "";
-        } catch {
-          const m = data.match(new RegExp(`[?&]${param}=([^&]*)`));
-          data = m ? decodeURIComponent(m[1]!) : "";
-        }
-        break;
-      }
-      case "timeparse":
-      case "dateparse": {
-        const layout = arg(filter.args);
-        const unix = parseGoLayout(data, layout);
-        data = dateToString(unix ?? fromUnknown(data));
-        break;
-      }
-      case "regexp": {
-        const pattern = arg(filter.args);
-        try {
-          const m = new RegExp(pattern).exec(data);
-          data = m ? (m[1] ?? "") : "";
-        } catch {
-          data = "";
-        }
-        break;
-      }
-      case "re_replace": {
-        const pattern = arg(filter.args, 0);
-        const repl = applyTemplate(arg(filter.args, 1), vars);
-        try {
-          data = data.replace(new RegExp(pattern, "g"), repl);
-        } catch {
-          /* leave data unchanged on bad pattern */
-        }
-        break;
-      }
-      case "split": {
-        const sep = arg(filter.args, 0);
-        let pos = parseInt(arg(filter.args, 1), 10);
-        const parts = data.split(sep.charAt(0) || sep);
-        if (pos < 0) pos += parts.length;
-        data = parts[pos] ?? "";
-        break;
-      }
-      case "replace": {
-        const from = arg(filter.args, 0);
-        const to = applyTemplate(arg(filter.args, 1), vars);
-        data = data.split(from).join(to);
-        break;
-      }
-      case "trim": {
-        const cutset = arg(filter.args);
-        if (cutset) {
-          const c = cutset.charAt(0);
-          while (data.startsWith(c)) data = data.slice(1);
-          while (data.endsWith(c)) data = data.slice(0, -1);
-        } else {
-          data = data.trim();
-        }
-        break;
-      }
-      case "prepend":
-        data = applyTemplate(arg(filter.args), vars) + data;
-        break;
-      case "append":
-        data = data + applyTemplate(arg(filter.args), vars);
-        break;
-      case "tolower":
-        data = data.toLowerCase();
-        break;
-      case "toupper":
-        data = data.toUpperCase();
-        break;
-      case "urldecode":
-        try {
-          data = decodeURIComponent(data.replace(/\+/g, " "));
-        } catch {
-          /* keep */
-        }
-        break;
-      case "urlencode":
-        data = encodeURIComponent(data);
-        break;
-      case "htmldecode":
-        data = decodeEntities(data);
-        break;
-      case "htmlencode":
-        data = data
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;");
-        break;
-      case "timeago":
-      case "reltime":
-        data = dateToString(fromTimeAgo(data));
-        break;
-      case "fuzzytime":
-        data = dateToString(fromUnknown(data));
-        break;
-      case "diacritics": {
-        if (arg(filter.args) === "replace") {
-          data = data.normalize("NFD").replace(/[\u0300-\u036f]/g, "").normalize("NFC");
-        }
-        break;
-      }
-      case "validate": {
-        const delimiters = /[,\s/)(.;[\]"|:]+/;
-        const valid = arg(filter.args).toLowerCase().split(delimiters).filter(Boolean);
-        const have = data.toLowerCase().split(delimiters).filter(Boolean);
-        data = valid.filter((v) => have.includes(v)).join(", ");
-        break;
-      }
-      case "hexdump":
-      case "strdump":
-      case "validfilename":
-        // no-op / debug filters: pass data through unchanged.
-        break;
-      default:
-        // Unknown filter: pass through (matches Prowlarr's "log and continue").
-        break;
-    }
+    const fn = FILTERS[filter.name];
+    if (fn) data = fn(data, filter.args, vars);
   }
-
   return data;
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isDebridError, type DebridProvider, type Transfer } from "../../debrid/types";
+import { mapPool } from "../../util/concurrency";
 
 export interface ProviderPollState {
   loading: boolean;
@@ -20,6 +21,8 @@ export interface TransfersState {
 // Poll quickly while anything is in flight, slowly when everything is settled.
 const ACTIVE_INTERVAL_MS = 4_000;
 const IDLE_INTERVAL_MS = 15_000;
+// Providers are few, but route through the shared pool for consistency.
+const TRANSFERS_CONCURRENCY = 6;
 
 function idle(): TransfersState {
   return { transfers: [], perProvider: {}, loading: false, lastUpdated: null };
@@ -91,15 +94,13 @@ export function useTransfers(
       const ps = providersRef.current;
       const now = Date.now();
 
-      const settled = await Promise.allSettled(
-        ps.map(async (p) => {
-          if ((cooldownUntil.get(p.id) ?? 0) > now) {
-            // Still backing off: reuse the last-known rows, skip the call.
-            return lastByProvider.get(p.id) ?? [];
-          }
-          return p.listTransfers(ctrl.signal);
-        }),
-      );
+      const settled = await mapPool(ps, TRANSFERS_CONCURRENCY, async (p) => {
+        if ((cooldownUntil.get(p.id) ?? 0) > now) {
+          // Still backing off: reuse the last-known rows, skip the call.
+          return lastByProvider.get(p.id) ?? [];
+        }
+        return p.listTransfers(ctrl.signal);
+      });
       if (!alive) return;
 
       const merged: Transfer[] = [];

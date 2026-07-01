@@ -22,18 +22,15 @@ function varString(vars: TemplateVars, key: string): string | null {
   return v;
 }
 
-export function applyTemplate(
-  template: string | undefined,
+// ---- individual template transforms (each independently testable) -----------
+
+/** {{ re_replace .Var "pattern" "replacement" }} */
+function applyReReplace(
+  out: string,
   vars: TemplateVars,
   modifier?: TextModifier,
 ): string {
-  if (template == null) return "";
-  if (template === "" || !template.includes("{{")) return template;
-
-  let out = template;
-
-  // re_replace: {{ re_replace .Var "pattern" "replacement" }}
-  out = out.replace(
+  return out.replace(
     /{{\s*re_replace\s+(\.[^\s]+?)\s+"([^"]*)"\s+"([^"]*)"\s*}}/g,
     (_all, variable: string, pattern: string, repl: string) => {
       const input = varString(vars, variable) ?? "";
@@ -46,9 +43,15 @@ export function applyTemplate(
       return modifier ? modifier(expanded) : expanded;
     },
   );
+}
 
-  // join: {{ join .Var "," }}
-  out = out.replace(
+/** {{ join .Var "," }} */
+function applyJoin(
+  out: string,
+  vars: TemplateVars,
+  modifier?: TextModifier,
+): string {
+  return out.replace(
     /{{\s*join\s+(\.[^\s]+?)\s+"([^"]*)"\s*}}/g,
     (_all, variable: string, delim: string) => {
       const v = vars[variable];
@@ -57,8 +60,10 @@ export function applyTemplate(
       return modifier ? modifier(expanded) : expanded;
     },
   );
+}
 
-  // Logic functions (and / or / eq / ne) — iterated to support nesting.
+/** {{ and/or/eq/ne (.A) (.B) "literal" ... }} — iterated to support nesting. */
+function applyLogic(out: string, vars: TemplateVars): string {
   for (let guard = 0; guard < 50; guard++) {
     const m = LOGIC_RE.exec(out);
     if (!m) break;
@@ -78,7 +83,6 @@ export function applyTemplate(
       for (const p of params) {
         result = p;
         const empty = !varString(vars, p);
-        // and: break on first empty; or: break on first non-empty.
         if (empty === isAnd) break;
       }
     } else {
@@ -90,10 +94,8 @@ export function applyTemplate(
       result = isEqual === wantEqual ? ".True" : ".False";
     }
     const start = m.index;
-    // For eq/ne, only consume the first two params, like Prowlarr.
     let consumed = m[0]!.length;
     if ((fn === "eq" || fn === "ne") && params.length > 2) {
-      // Recompute end of second param within the match.
       const matchText = m[0]!;
       const re2 = /\(?\.[^\)\s]+\)?|"[^"]+"/g;
       let count = 0;
@@ -110,13 +112,15 @@ export function applyTemplate(
     }
     out = out.slice(0, start) + result + out.slice(start + consumed);
   }
+  return out;
+}
 
-  // if / else: {{ if .Var }}A{{ else }}B{{ end }}
-  out = out.replace(
+/** {{ if .Var }}A{{ else }}B{{ end }} */
+function applyIfElse(out: string, vars: TemplateVars): string {
+  return out.replace(
     /{{\s*if\s*(.+?)\s*}}(.*?){{\s*else\s*}}(.*?){{\s*end\s*}}/gs,
     (_all, cond: string, onTrue: string, onFalse: string) => {
       if (!cond.startsWith(".")) return onFalse;
-      // .True / .False are the canonical logic-result sentinels.
       if (cond === ".True") return onTrue;
       if (cond === ".False") return onFalse;
       const v = vars[cond];
@@ -124,9 +128,15 @@ export function applyTemplate(
       return truthy ? onTrue : onFalse;
     },
   );
+}
 
-  // range: {{ range .Var }}prefix{{.}}postfix{{end}}
-  out = out.replace(
+/** {{ range .Var }}prefix{{.}}postfix{{end}} */
+function applyRange(
+  out: string,
+  vars: TemplateVars,
+  modifier?: TextModifier,
+): string {
+  return out.replace(
     /{{\s*range\s*(?:(\$[^,]+?),\s*([^\s]+?)\s*:=\s*)?(.+?)\s*}}(.*?){{\.}}(.*?){{\s*end\s*}}/gs,
     (_all, index: string | undefined, _el, variable: string, prefix: string, postfix: string) => {
       const v = vars[variable];
@@ -147,12 +157,50 @@ export function applyTemplate(
       return expanded;
     },
   );
+}
 
-  // Simple variables: {{ .Var }}
-  out = out.replace(/{{\s*(\.[^\s}]+?)\s*}}/g, (_all, variable: string) => {
+/** Simple variables: {{ .Var }} */
+function applySimpleVar(
+  out: string,
+  vars: TemplateVars,
+  modifier?: TextModifier,
+): string {
+  return out.replace(/{{\s*(\.[^\s}]+?)\s*}}/g, (_all, variable: string) => {
     const value = varString(vars, variable) ?? "";
     return modifier ? modifier(value) : value;
   });
+}
 
+/**
+ * Apply all template transforms in evaluation order: function-call forms first
+ * (re_replace, join), then logic, then control flow (if/else, range), then
+ * plain variable substitution. Order matters: logic produces .True/.False which
+ * if/else reads, and all of these must run before the final simple-var pass.
+ */
+export function applyTemplate(
+  template: string | undefined,
+  vars: TemplateVars,
+  modifier?: TextModifier,
+): string {
+  if (template == null) return "";
+  if (template === "" || !template.includes("{{")) return template;
+
+  let out = template;
+  out = applyReReplace(out, vars, modifier);
+  out = applyJoin(out, vars, modifier);
+  out = applyLogic(out, vars);
+  out = applyIfElse(out, vars);
+  out = applyRange(out, vars, modifier);
+  out = applySimpleVar(out, vars, modifier);
   return out;
 }
+
+// Exposed for unit testing of individual transforms.
+export {
+  applyReReplace,
+  applyJoin,
+  applyLogic,
+  applyIfElse,
+  applyRange,
+  applySimpleVar,
+};

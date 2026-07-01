@@ -21,6 +21,7 @@ import type {
 import { parseSize } from "../util/format";
 import { buildMagnet, infoHashFromMagnet, normalizeInfoHash } from "../sources/magnet";
 import { fetchResilient, HttpError, USER_AGENT } from "../util/net";
+import { mapPool } from "../util/concurrency";
 
 export interface ExecutorResult {
   infoHash: string | null;
@@ -64,13 +65,11 @@ function baseVariables(def: CardigannDefinition, siteLink: string): TemplateVars
         vars[name] = s.default === "true" ? ".True" : null;
         break;
       case "select": {
-        // Default to the configured default option key, else the first.
         const keys = Object.keys(s.options ?? {}).sort();
         vars[name] = s.default ?? keys[0] ?? "";
         break;
       }
       default:
-        // info* and unknown setting types contribute no variable.
         break;
     }
   }
@@ -187,7 +186,6 @@ function querySelector(
     scope = $.root() as unknown as cheerio.Cheerio<never>;
     if (!sel) return scope;
   }
-  // self-match (like AngleSharp dom.Matches) then descendant search.
   if (el.is(sel)) return el;
   const found = scope.find(sel);
   return found.length ? (found.first() as unknown as cheerio.Cheerio<never>) : null;
@@ -249,7 +247,6 @@ function handleHtmlSelector(
 // ---- JSON selector handling -------------------------------------------------
 
 function jsonSelectToken(obj: unknown, selector: string): unknown {
-  // Support dotted paths and [index] access; a leading "." is stripped.
   let cur: unknown = obj;
   const path = selector.replace(/^\./, "");
   if (path === "") return cur;
@@ -281,7 +278,6 @@ function handleJsonSelector(
   let value: string | null = null;
   if (selector.selector) {
     const sel = applyTemplate(selector.selector.replace(/^\./, ""), vars);
-    // strip cardigann :filter(...) suffixes for plain field access
     const baseSel = sel.split(":")[0]!;
     const token = jsonSelectToken(parent, baseSel);
     if (token == null) {
@@ -306,6 +302,74 @@ function handleJsonSelector(
   }
   return applyFilters((value ?? "").trim(), selector.filters, vars);
 }
+
+// ---- SelectorEngine strategy ------------------------------------------------
+
+interface SelectorEngine {
+  /** Extract a single field value from a row object using the given selector. */
+  handleSelector(selector: CardigannSelector, row: unknown, vars: TemplateVars, required: boolean): string | null;
+  /** Parse the raw response into an array of row objects. */
+  parseRows(search: CardigannDefinition["search"], text: string, vars: TemplateVars): unknown[];
+}
+
+const htmlEngine: SelectorEngine = {
+  handleSelector(selector, row, vars, required) {
+    return handleHtmlSelector(cheerio.load(""), selector, row as cheerio.Cheerio<never>, vars, required);
+  },
+  parseRows(search, text, vars) {
+    let content = text;
+    if (search.preprocessingfilters) {
+      content = applyFilters(content, search.preprocessingfilters, vars);
+    }
+    const $ = cheerio.load(content);
+    const rowsSelector = applyTemplate(search.rows.selector ?? "", vars);
+    return $(rowsSelector).toArray().map((el) => $(el) as unknown as cheerio.Cheerio<never>);
+  },
+};
+
+const xmlEngine: SelectorEngine = {
+  handleSelector(selector, row, vars, required) {
+    return handleHtmlSelector(cheerio.load(""), selector, row as cheerio.Cheerio<never>, vars, required);
+  },
+  parseRows(search, text, vars) {
+    let content = text;
+    if (search.preprocessingfilters) {
+      content = applyFilters(content, search.preprocessingfilters, vars);
+    }
+    const $ = cheerio.load(content, { xml: { xmlMode: true } });
+    const rowsSelector = applyTemplate(search.rows.selector ?? "", vars);
+    return $(rowsSelector).toArray().map((el) => $(el) as unknown as cheerio.Cheerio<never>);
+  },
+};
+
+const jsonEngine: SelectorEngine = {
+  handleSelector(selector, row, vars, required) {
+    return handleJsonSelector(selector, row, vars, required);
+  },
+  parseRows(search, text, _vars) {
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return [];
+    }
+    const rowsSel = applyTemplate(search.rows.selector ?? "", {}).split(":")[0]!;
+    const rowsToken = jsonSelectToken(json, rowsSel);
+    if (!Array.isArray(rowsToken)) return [];
+
+    const rows: unknown[] = [];
+    for (const rowObj of rowsToken) {
+      let selObj: unknown = rowObj;
+      if (search.rows.attribute) {
+        selObj = jsonSelectToken(rowObj, search.rows.attribute);
+        if (selObj == null) continue;
+      }
+      const mulRows = search.rows.multiple && Array.isArray(selObj) ? selObj : [selObj];
+      rows.push(...mulRows);
+    }
+    return rows;
+  },
+};
 
 // ---- field mapping ----------------------------------------------------------
 
@@ -364,12 +428,11 @@ function applyField(
       break;
     }
     default:
-      // imdb/tmdb/grabs/files/poster/etc. — not surfaced in the TUI; ignore.
       break;
   }
 }
 
-// ---- row parsing ------------------------------------------------------------
+// ---- shared row processing --------------------------------------------------
 
 function parseField(
   fieldKey: string,
@@ -399,9 +462,8 @@ function blankResult(): ExecutorResult {
 
 function finalize(
   result: ExecutorResult,
-  def: CardigannDefinition,
+  _def: CardigannDefinition,
 ): ExecutorResult {
-  // Derive magnet from info hash (public) and vice versa.
   if (!result.magnet && result.infoHash) {
     result.magnet = buildMagnet(result.infoHash, result.title || undefined);
   }
@@ -411,6 +473,71 @@ function finalize(
   return result;
 }
 
+function processRow(
+  engine: SelectorEngine,
+  row: unknown,
+  fields: CardigannDefinition["search"]["fields"],
+  vars: TemplateVars,
+  catMap: CategoryMap,
+  siteLink: string,
+  searchUrl: string,
+  def: CardigannDefinition,
+): ExecutorResult | null {
+  const result = blankResult();
+  let fatal = false;
+  for (const { key, value } of fields) {
+    const { name, modifiers, optional } = parseField(key);
+    try {
+      let v = engine.handleSelector(value, row, vars, !optional);
+      if (optional && (v == null || v.trim() === "")) {
+        const def2 = applyTemplate(value.default ?? "", vars);
+        if (!def2) continue;
+        v = def2;
+      }
+      if (v != null) {
+        vars[".Result." + name] = v;
+        applyField(result, name, v, modifiers, catMap, siteLink, searchUrl);
+      }
+    } catch {
+      if (!optional) {
+        fatal = true;
+        break;
+      }
+    }
+  }
+  if (fatal) return null;
+  const finished = finalize(result, def);
+  if ((finished.magnet || finished.downloadUrl) && finished.title) {
+    return finished;
+  }
+  return null;
+}
+
+// ---- response parsing -------------------------------------------------------
+
+/**
+ * Parse a response body (HTML, XML, or JSON) into results, using a selector
+ * engine strategy so the row-loop lives once.
+ */
+export function parseResults(
+  text: string,
+  def: CardigannDefinition,
+  catMap: CategoryMap,
+  vars: TemplateVars,
+  siteLink: string,
+  searchUrl: string,
+  engine: SelectorEngine,
+): ExecutorResult[] {
+  const rows = engine.parseRows(def.search, text, vars);
+  const out: ExecutorResult[] = [];
+  for (const row of rows) {
+    const result = processRow(engine, row, def.search.fields, vars, catMap, siteLink, searchUrl, def);
+    if (result) out.push(result);
+  }
+  return out;
+}
+
+/** @deprecated Use parseResults with htmlEngine instead. */
 export function parseHtmlResults(
   html: string,
   def: CardigannDefinition,
@@ -420,53 +547,10 @@ export function parseHtmlResults(
   searchUrl: string,
   isXml: boolean,
 ): ExecutorResult[] {
-  const search = def.search;
-  let content = html;
-  if (search.preprocessingfilters) {
-    content = applyFilters(content, search.preprocessingfilters, vars);
-  }
-  const $ = isXml
-    ? cheerio.load(content, { xml: { xmlMode: true } })
-    : cheerio.load(content);
-
-  const rowsSelector = applyTemplate(search.rows.selector ?? "", vars);
-  const rowEls = $(rowsSelector).toArray();
-  const out: ExecutorResult[] = [];
-
-  // "after" row merging is rare in public defs; handle the common no-merge path.
-  for (const rowEl of rowEls) {
-    const row = $(rowEl) as unknown as cheerio.Cheerio<never>;
-    const result = blankResult();
-    let fatal = false;
-    for (const { key, value } of search.fields) {
-      const { name, modifiers, optional } = parseField(key);
-      try {
-        let v = handleHtmlSelector($, value, row, vars, !optional);
-        if (optional && (v == null || v.trim() === "")) {
-          const def2 = applyTemplate(value.default ?? "", vars);
-          if (!def2) continue;
-          v = def2;
-        }
-        if (v != null) {
-          vars[".Result." + name] = v;
-          applyField(result, name, v, modifiers, catMap, siteLink, searchUrl);
-        }
-      } catch {
-        if (!optional) {
-          fatal = true;
-          break;
-        }
-      }
-    }
-    if (fatal) continue;
-    const finished = finalize(result, def);
-    if ((finished.magnet || finished.downloadUrl) && finished.title) {
-      out.push(finished);
-    }
-  }
-  return out;
+  return parseResults(html, def, catMap, vars, siteLink, searchUrl, isXml ? xmlEngine : htmlEngine);
 }
 
+/** @deprecated Use parseResults with jsonEngine instead. */
 export function parseJsonResults(
   text: string,
   def: CardigannDefinition,
@@ -475,60 +559,55 @@ export function parseJsonResults(
   siteLink: string,
   searchUrl: string,
 ): ExecutorResult[] {
-  const search = def.search;
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    return [];
-  }
-  const rowsSel = applyTemplate(search.rows.selector ?? "", vars).split(":")[0]!;
-  const rowsToken = jsonSelectToken(json, rowsSel);
-  if (!Array.isArray(rowsToken)) return [];
-
-  const out: ExecutorResult[] = [];
-  for (const rowObj of rowsToken) {
-    let selObj: unknown = rowObj;
-    if (search.rows.attribute) {
-      selObj = jsonSelectToken(rowObj, search.rows.attribute);
-      if (selObj == null) continue;
-    }
-    const mulRows = search.rows.multiple && Array.isArray(selObj) ? selObj : [selObj];
-    for (const mulRow of mulRows) {
-      const result = blankResult();
-      let fatal = false;
-      for (const { key, value } of search.fields) {
-        const { name, modifiers, optional } = parseField(key);
-        try {
-          let v = handleJsonSelector(value, mulRow, vars, !optional);
-          if (optional && (v == null || v.trim() === "")) {
-            const d = applyTemplate(value.default ?? "", vars);
-            if (!d) continue;
-            v = d;
-          }
-          if (v != null) {
-            vars[".Result." + name] = v;
-            applyField(result, name, v, modifiers, catMap, siteLink, searchUrl);
-          }
-        } catch {
-          if (!optional) {
-            fatal = true;
-            break;
-          }
-        }
-      }
-      if (fatal) continue;
-      const finished = finalize(result, def);
-      if ((finished.magnet || finished.downloadUrl) && finished.title) {
-        out.push(finished);
-      }
-    }
-  }
-  return out;
+  return parseResults(text, def, catMap, vars, siteLink, searchUrl, jsonEngine);
 }
+
+export { type SelectorEngine, htmlEngine, xmlEngine, jsonEngine };
 
 function responseType(searchPath: CardigannSearchPath | undefined): string {
   return (searchPath?.response?.type ?? "html").toLowerCase();
+}
+
+function buildSearchHeaders(
+  def: CardigannDefinition,
+  vars: TemplateVars,
+): Record<string, string> {
+  const headers: Record<string, string> = { "User-Agent": USER_AGENT };
+  if (def.search.headers) {
+    for (const [k, v] of Object.entries(def.search.headers)) {
+      if (Array.isArray(v) && v[0] != null) {
+        headers[k] = applyTemplate(v[0], vars);
+      }
+    }
+  }
+  return headers;
+}
+
+async function fetchSearchPage(
+  req: { url: string; method: string; form?: Record<string, string> },
+  headers: Record<string, string>,
+  opts: ExecuteOptions,
+): Promise<string> {
+  const res = await fetchResilient(req.url, {
+    method: req.method.toUpperCase(),
+    headers,
+    body:
+      req.method === "post" && req.form
+        ? new URLSearchParams(req.form).toString()
+        : undefined,
+    signal: opts.signal,
+    fetchImpl: opts.fetchImpl as never,
+    retries: 1,
+  });
+  if (!res.ok) throw new HttpError(res.status, `request returned ${res.status}`);
+  return res.text();
+}
+
+function selectEngine(searchPath: CardigannSearchPath): SelectorEngine {
+  const type = responseType(searchPath);
+  if (type === "json") return jsonEngine;
+  if (type === "xml") return xmlEngine;
+  return htmlEngine;
 }
 
 /**
@@ -546,37 +625,33 @@ async function resolveDownloadInfohashes(
   const block = def.download?.infohash;
   if (!block?.hash) return;
   const pending = results.filter((r) => !r.magnet && !r.infoHash && r.detailsUrl);
-  const targets = pending.slice(0, 20); // cap the extra fetches per search
-  let i = 0;
-  const worker = async (): Promise<void> => {
-    while (i < targets.length) {
-      const r = targets[i++]!;
-      try {
-        const html = await fetchResilient(r.detailsUrl!, {
-          headers: { "User-Agent": USER_AGENT },
-          signal: opts.signal,
-          fetchImpl: opts.fetchImpl as never,
-          retries: 0,
-        });
-        if (!html.ok) continue;
-        const $ = cheerio.load(await html.text());
-        const root = $.root() as unknown as cheerio.Cheerio<never>;
-        const hashSel: CardigannSelector = {
-          selector: block.hash!.selector,
-          attribute: block.hash!.attribute,
-          filters: block.hash!.filters,
-        };
-        const hashVal = handleHtmlSelector($, hashSel, root, vars, false);
-        if (hashVal) {
-          r.infoHash = normalizeInfoHash(hashVal);
-          r.magnet = buildMagnet(r.infoHash, r.title || undefined);
-        }
-      } catch {
-        /* leave as download-only result */
+  const targets = pending.slice(0, 20);
+
+  await mapPool(targets, 6, async (r) => {
+    try {
+      const html = await fetchResilient(r.detailsUrl!, {
+        headers: { "User-Agent": USER_AGENT },
+        signal: opts.signal,
+        fetchImpl: opts.fetchImpl as never,
+        retries: 0,
+      });
+      if (!html.ok) return;
+      const $ = cheerio.load(await html.text());
+      const root = $.root() as unknown as cheerio.Cheerio<never>;
+      const hashSel: CardigannSelector = {
+        selector: block.hash!.selector,
+        attribute: block.hash!.attribute,
+        filters: block.hash!.filters,
+      };
+      const hashVal = handleHtmlSelector($, hashSel, root, vars, false);
+      if (hashVal) {
+        r.infoHash = normalizeInfoHash(hashVal);
+        r.magnet = buildMagnet(r.infoHash, r.title || undefined);
       }
+    } catch {
+      /* leave as download-only result */
     }
-  };
-  await Promise.all(Array.from({ length: Math.min(6, targets.length) }, worker));
+  });
 }
 
 /** Execute a search against a single base URL, returning parsed results. */
@@ -600,50 +675,16 @@ export async function executeSearch(
     const req = buildRequest(def, searchPath, vars, siteLink);
     uriVariables(vars, req.url);
 
-    const headers: Record<string, string> = { "User-Agent": USER_AGENT };
-    if (def.search.headers) {
-      for (const [k, v] of Object.entries(def.search.headers)) {
-        if (Array.isArray(v) && v[0] != null) {
-          headers[k] = applyTemplate(v[0], vars);
-        }
-      }
-    }
+    const headers = buildSearchHeaders(def, vars);
+    const text = await fetchSearchPage(req, headers, opts);
 
-    const res = await fetchResilient(req.url, {
-      method: req.method.toUpperCase(),
-      headers,
-      body:
-        req.method === "post" && req.form
-          ? new URLSearchParams(req.form).toString()
-          : undefined,
-      signal: opts.signal,
-      fetchImpl: opts.fetchImpl as never,
-      retries: 1,
-    });
-    if (!res.ok) throw new HttpError(res.status, `${def.id} returned ${res.status}`);
-    const text = await res.text();
-
-    const type = responseType(searchPath);
     const nrm = searchPath.response?.noResultsMessage;
     if (nrm && text.includes(nrm)) continue;
 
-    if (type === "json") {
-      collected.push(
-        ...parseJsonResults(text, def, catMap, vars, siteLink, req.url),
-      );
-    } else {
-      collected.push(
-        ...parseHtmlResults(
-          text,
-          def,
-          catMap,
-          vars,
-          siteLink,
-          req.url,
-          type === "xml",
-        ),
-      );
-    }
+    const engine = selectEngine(searchPath);
+    collected.push(
+      ...parseResults(text, def, catMap, vars, siteLink, req.url, engine),
+    );
   }
   await resolveDownloadInfohashes(def, collected, vars, opts);
   return collected;

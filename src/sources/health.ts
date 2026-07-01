@@ -1,5 +1,6 @@
 import type { SourceHealth } from "../config/config";
 import type { Source } from "./types";
+import { mapPool } from "../util/concurrency";
 
 const PROBE_TIMEOUT_MS = 20_000;
 
@@ -84,18 +85,12 @@ export async function probeAll(
   onResult: (outcome: ProbeOutcome) => void,
   concurrency = 12,
 ): Promise<ProbeOutcome[]> {
-  const outcomes: ProbeOutcome[] = [];
-  let i = 0;
-  async function worker(): Promise<void> {
-    while (i < sources.length) {
-      const source = sources[i++]!;
-      const outcome = await probeSource(source, mirrorOf(source));
-      outcomes.push(outcome);
-      onResult(outcome);
-    }
-  }
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, sources.length) }, worker),
-  );
-  return outcomes;
+  const settled = await mapPool(sources, concurrency, async (source) => {
+    const outcome = await probeSource(source, mirrorOf(source));
+    onResult(outcome);
+    return outcome;
+  });
+  return settled
+    .filter((r): r is PromiseFulfilledResult<ProbeOutcome> => r.status === "fulfilled")
+    .map((r) => r.value);
 }

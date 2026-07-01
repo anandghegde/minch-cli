@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { cachedSearch } from "../../sources/cache";
 import { dedupe, defaultOrder } from "../../sources/search";
 import { HttpError } from "../../util/net";
+import { mapPool } from "../../util/concurrency";
 import type { Source, TorrentResult } from "../../sources/types";
 
 export interface SourceSearchState {
@@ -19,7 +20,14 @@ export interface ConcurrentSearchState {
   total: number;
 }
 
+/** One source's outcome: either its results or a normalized error. */
+type SourceOutcome =
+  | { ok: true; results: TorrentResult[] }
+  | { ok: false; error: string; code: string };
+
 const PER_SOURCE_TIMEOUT_MS = 20_000;
+// Bound simultaneous requests so 50+ enabled sources don't all fire at once.
+const SEARCH_CONCURRENCY = 12;
 
 function errorCode(e: unknown, timedOut: boolean): string {
   if (timedOut) return "timed out";
@@ -71,50 +79,62 @@ export function useConcurrentSearch(
       total: sources.length,
     });
 
-    for (const source of sources) {
+    // Fetch one source: per-source timeout + abort linked to the run's signal.
+    // Returns a result union so an expected failure is data, not a thrown
+    // exception (keeps control flow explicit and testable).
+    const runSource = async (source: Source): Promise<SourceOutcome> => {
+      if (ctrl.signal.aborted) return { ok: false, error: "aborted", code: "aborted" };
       const sc = new AbortController();
       const onAbort = (): void => sc.abort();
       ctrl.signal.addEventListener("abort", onAbort);
       const timer = setTimeout(() => sc.abort(), PER_SOURCE_TIMEOUT_MS);
-
-      cachedSearch(source, query, {
-        signal: sc.signal,
-        baseUrl: mirrorRef.current(source),
-      })
-        .then((res) => {
-          if (!alive) return;
-          collected.push(...res);
-          per[source.id] = {
-            loading: false,
-            error: null,
-            code: null,
-            count: res.length,
-          };
-        })
-        .catch((e: unknown) => {
-          if (!alive || ctrl.signal.aborted) return;
-          const timedOut = sc.signal.aborted;
-          per[source.id] = {
-            loading: false,
-            error: timedOut ? "timed out" : e instanceof Error ? e.message : String(e),
-            code: errorCode(e, timedOut),
-            count: 0,
-          };
-        })
-        .finally(() => {
-          clearTimeout(timer);
-          ctrl.signal.removeEventListener("abort", onAbort);
-          if (!alive) return;
-          done += 1;
-          setState({
-            results: defaultOrder(dedupe(collected.slice())),
-            perSource: { ...per },
-            loading: done < sources.length,
-            done,
-            total: sources.length,
-          });
+      try {
+        const res = await cachedSearch(source, query, {
+          signal: sc.signal,
+          baseUrl: mirrorRef.current(source),
         });
-    }
+        return { ok: true, results: res };
+      } catch (e: unknown) {
+        const timedOut = sc.signal.aborted && !ctrl.signal.aborted;
+        return {
+          ok: false,
+          error: timedOut ? "timed out" : e instanceof Error ? e.message : String(e),
+          code: errorCode(e, timedOut),
+        };
+      } finally {
+        clearTimeout(timer);
+        ctrl.signal.removeEventListener("abort", onAbort);
+      }
+    };
+
+    const onSettled = (
+      source: Source,
+      _index: number,
+      settled: PromiseSettledResult<SourceOutcome>,
+    ): void => {
+      if (!alive) return;
+      if (settled.status === "fulfilled") {
+        const r = settled.value;
+        if (r.ok) {
+          collected.push(...r.results);
+          per[source.id] = { loading: false, error: null, code: null, count: r.results.length };
+        } else {
+          per[source.id] = { loading: false, error: r.error, code: r.code, count: 0 };
+        }
+      } else {
+        per[source.id] = { loading: false, error: "no response", code: "no response", count: 0 };
+      }
+      done += 1;
+      setState({
+        results: defaultOrder(dedupe(collected.slice())),
+        perSource: { ...per },
+        loading: done < sources.length,
+        done,
+        total: sources.length,
+      });
+    };
+
+    void mapPool(sources, SEARCH_CONCURRENCY, runSource, onSettled);
 
     return () => {
       alive = false;

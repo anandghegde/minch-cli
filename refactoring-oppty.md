@@ -63,6 +63,12 @@ E. Suggested order
 2. B1 debrid base + B5 provider descriptor (kills the most duplication, makes adding providers a one-file change).
 3. B2 sources adapter toolkit (50-60% adapter shrink; also fixes the error-code regex fragility).
 4. C executor decomposition + the mapPool util shared with B4 (unlocks unit tests for the riskiest parsing/concurrency code).
+   - Status: complete.
+   - executor.ts: SelectorEngine strategy (html/xml/json) + single processRow/parseResults row loop; executeSearch split into buildSearchHeaders/fetchSearchPage/selectEngine; resolveDownloadInfohashes via mapPool; parseHtmlResults/parseJsonResults kept as deprecated wrappers.
+   - loader.ts: split loadDefinition into assertSupported + buildDefinition.
+   - filters.ts: 20-case switch replaced with a FILTERS registry of pure FilterFns + pipeline applyFilters.
+   - template.ts: split applyTemplate into applyReReplace/applyJoin/applyLogic/applyIfElse/applyRange/applySimpleVar.
+   - src/util/concurrency.ts: shared mapPool (allSettled semantics + optional onSettled streaming) now backs health.probeAll, executor.resolveDownloadInfohashes, useConcurrentSearch (bounded to 12), and useTransfers.
 5. B3 App.tsx hook extraction (maintainability + render perf).
 6. Sweep D (dead code, magic numbers, hoisted helpers) opportunistically alongside the above.
 Two things worth calling out positively: sources/filters.ts, util/atomic.ts, and util/format.ts are clean, pure, and well-tested — good templates for the style the rest should converge toward. Nothing here suggests a rewrite; it's mostly DRYing duplicated adapters and decomposing four oversized functions (App, downloadFile, executeSearch/parsers, applyTemplate/applyFilters).
