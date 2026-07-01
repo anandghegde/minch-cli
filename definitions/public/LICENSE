@@ -1,0 +1,21 @@
+Indexer definitions: attribution and license
+=============================================
+
+The YAML files in this directory are Cardigann indexer definitions vendored,
+unmodified, from the Prowlarr/Indexers project:
+
+    https://github.com/Prowlarr/Indexers
+
+They are licensed under the GNU General Public License, version 3.0 (GPL-3.0),
+the same license as Prowlarr. minch-cli bundles only the `type: public`
+definitions that its scoped Cardigann interpreter can run (no login/auth).
+
+minch-cli does not alter the contents of these definitions; the
+`npm run sync:definitions` script only downloads and filters them.
+
+All credit for these definitions, and for the Cardigann definition format, goes
+to the Prowlarr team and contributors.
+
+A copy of the GPL-3.0 license text is available at:
+
+    https://www.gnu.org/licenses/gpl-3.0.txt
