@@ -47,6 +47,16 @@ function toResult(it: ApibayItem): Omit<TorrentResult, "source" | "sourceLabel">
   };
 }
 
+function toResults(items: unknown): TorrentResult[] {
+  const rows: ApibayItem[] = Array.isArray(items) ? items : [];
+  const out: TorrentResult[] = [];
+  for (const it of rows) {
+    const r = toResult(it);
+    if (r) out.push(makeResult(SRC, r));
+  }
+  return out;
+}
+
 async function search(
   query: string,
   opts: SearchOptions = {},
@@ -56,13 +66,28 @@ async function search(
     ? `${API}/q.php?q=${encodeURIComponent(q)}`
     : `${API}/precompiled/data_top100_207.json`;
   const items = await fetchJson<ApibayItem[]>(url, opts);
-  const rows = Array.isArray(items) ? items : [];
-  const out: TorrentResult[] = [];
-  for (const it of rows) {
-    const r = toResult(it);
-    if (r) out.push(makeResult(SRC, r));
+  return applyLimit(toResults(items), opts);
+}
+
+// Trending: apibay's cross-category "top 100 recent" feed — a better signal
+// than the HD-movies list search() uses for an empty query. Falls back to the
+// always-present top100 HD-movies list if the recent feed is unavailable, so
+// TPB still contributes to the trending tab.
+async function browse(opts: SearchOptions = {}): Promise<TorrentResult[]> {
+  let items: ApibayItem[];
+  try {
+    items = await fetchJson<ApibayItem[]>(
+      `${API}/precompiled/data_top100_recent.json`,
+      opts,
+    );
+  } catch (e) {
+    if (opts.signal?.aborted) throw e;
+    items = await fetchJson<ApibayItem[]>(
+      `${API}/precompiled/data_top100_207.json`,
+      opts,
+    );
   }
-  return applyLimit(out, opts);
+  return applyLimit(toResults(items), opts);
 }
 
 async function test(opts: SearchOptions = {}): Promise<TestResult> {
@@ -85,4 +110,5 @@ export const thepiratebay: Source = {
   defaultEnabled: true,
   test,
   search,
+  browse,
 };

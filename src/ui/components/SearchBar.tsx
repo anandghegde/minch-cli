@@ -6,12 +6,14 @@ export function SearchBar({
   active,
   onChange,
   onSubmit,
+  onCancel,
   width,
 }: {
   value: string;
   active: boolean;
   onChange: (v: string) => void;
   onSubmit: (v: string) => void;
+  onCancel: () => void;
   width: number;
 }) {
   useInput(
@@ -20,11 +22,15 @@ export function SearchBar({
         onSubmit(value);
         return;
       }
+      if (key.escape) {
+        onCancel();
+        return;
+      }
       if (key.backspace || key.delete) {
         onChange(value.slice(0, -1));
         return;
       }
-      if (key.ctrl || key.meta || key.escape || key.tab) return;
+      if (key.ctrl || key.meta || key.tab) return;
       if (key.upArrow || key.downArrow || key.leftArrow || key.rightArrow) return;
       if (input) onChange(value + input);
     },

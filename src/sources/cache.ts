@@ -1,3 +1,4 @@
+import { browseSource } from "./trending";
 import type { SearchOptions, Source, TorrentResult } from "./types";
 
 const TTL_MS = 5 * 60 * 1000;
@@ -23,6 +24,23 @@ export async function cachedSearch(
   const hit = cache.get(k);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.results;
   const results = await source.search(query, opts);
+  cache.set(k, { at: Date.now(), results });
+  return results;
+}
+
+// A query token that can't collide with a real search (control char) so the
+// browse feed gets its own cache slot per source/mirror.
+const BROWSE_KEY = "\u0000browse";
+
+/** Browse a source's trending feed, memoized like cachedSearch. */
+export async function cachedBrowse(
+  source: Source,
+  opts: SearchOptions & { baseUrl?: string } = {},
+): Promise<TorrentResult[]> {
+  const k = key(source.id, BROWSE_KEY, opts.baseUrl, opts.limit);
+  const hit = cache.get(k);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.results;
+  const results = await browseSource(source, opts);
   cache.set(k, { at: Date.now(), results });
   return results;
 }

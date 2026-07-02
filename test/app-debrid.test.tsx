@@ -6,9 +6,9 @@ import { App } from "../src/ui/App";
 import { configFile } from "../src/config/paths";
 
 // Integration smoke for the debrid wiring. With only a TorBox key configured,
-// tab cycles Search → Real-Debrid → TorBox → Sources: the Real-Debrid tab shows
-// unconfigured guidance while the TorBox tab shows its own (empty) transfers.
-// fetch is stubbed so the transfers poll never touches the network.
+// tab cycles Search → Trending → Real-Debrid → TorBox → Sources: the Real-Debrid
+// tab shows unconfigured guidance while the TorBox tab shows its own (empty)
+// transfers. fetch is stubbed so the transfers poll never touches the network.
 function torboxStub(): typeof fetch {
   return vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
@@ -53,7 +53,10 @@ describe("App debrid integration", () => {
     const { lastFrame, stdin, unmount } = render(createElement(App, { onQuit: () => {} }));
     await settle(800); // boot: loadConfig + buildRegistry
 
-    // search -> realdebrid: Real-Debrid has no key, so it prompts to add one.
+    // search -> trending -> realdebrid: Real-Debrid has no key, so it prompts
+    // to add one. (Trending sits between Search and Real-Debrid.)
+    stdin.write("\t");
+    await settle();
     stdin.write("\t");
     await settle();
     const rdFrame = lastFrame() ?? "";

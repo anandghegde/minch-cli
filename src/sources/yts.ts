@@ -67,6 +67,17 @@ async function search(
   return applyLimit(out, opts);
 }
 
+// Trending: YTS's most-downloaded movies (a better popularity signal than the
+// date-added list search() uses for an empty query).
+async function browse(opts: SearchOptions = {}): Promise<TorrentResult[]> {
+  const json = await fetchFirstOk(
+    movieUrls(new URLSearchParams({ limit: "50", sort_by: "download_count" })),
+    opts,
+    async (r) => (await r.json()) as YtsResponse,
+  );
+  return applyLimit(toResults(json), opts);
+}
+
 async function test(opts: SearchOptions = {}): Promise<TestResult> {
   return runProbe(opts, async () => {
     const json = await fetchFirstOk(
@@ -87,4 +98,5 @@ export const yts: Source = {
   defaultEnabled: true,
   test,
   search,
+  browse,
 };

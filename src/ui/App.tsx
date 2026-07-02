@@ -38,6 +38,8 @@ import { Footer, type Hint } from "./components/Footer";
 import { SearchBar } from "./components/SearchBar";
 import { Results } from "./components/Results";
 import { Sources } from "./components/Sources";
+import { Trending } from "./components/Trending";
+import { Tabs } from "./components/Tabs";
 import { ProviderTransfers } from "./components/ProviderTransfers";
 import { Accounts } from "./components/Accounts";
 import { HelpOverlay } from "./components/HelpOverlay";
@@ -47,12 +49,13 @@ import { useTransfers } from "./hooks/useTransfers";
 import { useDownloads } from "./hooks/useDownloads";
 import { COLOR } from "./theme";
 
-const TAB_ORDER: View[] = ["search", "realdebrid", "torbox", "sources"];
+export const TAB_ORDER: View[] = ["search", "trending", "realdebrid", "torbox", "sources"];
 
-/** User-facing tab labels, used for the footer "tab" hint. */
-const TAB_LABELS: Record<View, string> = {
+/** User-facing tab labels, used for the tab bar and footer "tab" hint. */
+export const TAB_LABELS: Record<View, string> = {
   splash: "",
   search: "Torrent Search",
+  trending: "Trending",
   realdebrid: "Real-Debrid",
   torbox: "TorBox",
   sources: "Sources",
@@ -189,6 +192,11 @@ export function App({
     setSubmittedQuery(q);
     setEditing(false);
     setView("search");
+  }, []);
+
+  const focusSearch = useCallback(() => {
+    setView("search");
+    setEditing(true);
   }, []);
 
   const cycleSort = useCallback(() => setSort((s) => nextSort(s)), []);
@@ -541,7 +549,7 @@ export function App({
 
   const rows = size.rows;
   const cols = size.cols;
-  const chrome = 6; // logo + rule + search bar + footer + margins
+  const chrome = 8; // logo + search bar + tab bar + footer + margins
   const listRows = Math.max(4, rows - chrome - 2);
 
   const store = useMemo<Store | null>(() => {
@@ -556,6 +564,7 @@ export function App({
       submittedQuery,
       setQuery,
       submitQuery,
+      focusSearch,
       sort,
       cycleSort,
       filters,
@@ -600,7 +609,7 @@ export function App({
       listRows,
     };
   }, [
-    config, registry, persist, view, query, submittedQuery, submitQuery, sort,
+    config, registry, persist, view, query, submittedQuery, submitQuery, focusSearch, sort,
     cycleSort, notice, copyMagnet, openMagnet, retestSource, retestAll,
     toggleSource, setMirror, quitAll, cols, rows, listRows,
     filters, cycleTimeFilter, cycleSizeFilter, cycleSeederFilter, resetFilters,
@@ -638,9 +647,8 @@ export function App({
         });
         return;
       }
-      if (input === "/") {
-        setView("search");
-        setEditing(true);
+      if (input === "/" || input === "i") {
+        focusSearch();
         return;
       }
       if (input === "a") {
@@ -693,6 +701,16 @@ export function App({
           tabHint,
           { keys: "?", label: "Keys" },
         ]
+      : view === "trending"
+        ? [
+            { keys: "\u2191\u2193", label: "Move" },
+            { keys: "\u2190\u2192", label: "Category" },
+            { keys: "y", label: "Copy" },
+            { keys: "b", label: "Debrid" },
+            { keys: "o", label: "Open" },
+            tabHint,
+            { keys: "?", label: "Keys" },
+          ]
       : view === "realdebrid" || view === "torbox"
         ? [
             { keys: "\u2191\u2193", label: "Move" },
@@ -703,15 +721,22 @@ export function App({
             tabHint,
             { keys: "?", label: "Keys" },
           ]
-        : [
-            { keys: "\u2191\u2193", label: "Move" },
-            { keys: "y", label: "Copy" },
-            { keys: "b", label: "Debrid" },
-            { keys: "s", label: "Sort" },
-            { keys: "t/z/x", label: "Filter" },
-            tabHint,
-            { keys: "?", label: "Keys" },
-          ];
+        : editing && view === "search"
+          ? [
+              { keys: "enter", label: "Search" },
+              { keys: "esc", label: "Cancel" },
+              { keys: "?", label: "Keys" },
+            ]
+          : [
+              { keys: "/", label: "Search" },
+              { keys: "\u2191\u2193", label: "Move" },
+              { keys: "y", label: "Copy" },
+              { keys: "b", label: "Debrid" },
+              { keys: "s", label: "Sort" },
+              { keys: "t/z/x", label: "Filter" },
+              tabHint,
+              { keys: "?", label: "Keys" },
+            ];
 
   return (
     <StoreContext.Provider value={store}>
@@ -737,13 +762,20 @@ export function App({
                 active={editing && view === "search"}
                 onChange={setQuery}
                 onSubmit={submitQuery}
+                onCancel={() => setEditing(false)}
                 width={Math.max(24, Math.min(cols - 2, 80))}
               />
+            </Box>
+
+            <Box marginTop={1}>
+              <Tabs />
             </Box>
 
             <Box marginTop={1} flexGrow={1}>
               {view === "sources" ? (
                 <Sources active={!editing} />
+              ) : view === "trending" ? (
+                <Trending active={!editing} />
               ) : view === "realdebrid" ? (
                 <ProviderTransfers provider="realdebrid" active={!editing} />
               ) : view === "torbox" ? (

@@ -13,7 +13,7 @@ import type {
 } from "../debrid/types";
 import type { DownloadEntry } from "../download/manager";
 
-export type View = "splash" | "search" | "sources" | "realdebrid" | "torbox";
+export type View = "splash" | "search" | "trending" | "sources" | "realdebrid" | "torbox";
 
 /** Per-provider result of the most recent `checkAuth`, shown in Accounts. */
 export interface DebridAuthState {
@@ -35,6 +35,8 @@ export interface Store {
   submittedQuery: string;
   setQuery: (q: string) => void;
   submitQuery: (q: string) => void;
+  /** Focus the search box (switch to the Search view and start editing the query). */
+  focusSearch: () => void;
 
   sort: SortState | "default";
   cycleSort: () => void;

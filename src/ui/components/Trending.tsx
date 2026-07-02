@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { useStore } from "../store";
-import { useConcurrentSearch } from "../hooks/useConcurrentSearch";
+import { useTrending } from "../hooks/useTrending";
 import { activeMirror, isEnabled } from "../../sources/registry";
-import { sortResults, sortLabel } from "../../sources/search";
-import { applyFilters, filterSummary } from "../../sources/filters";
+import {
+  TRENDING_CATEGORIES,
+  filterByCategory,
+} from "../../sources/trending";
 import { formatBytes, formatRelative, truncate, cleanText } from "../../util/format";
 import type { TorrentResult } from "../../sources/types";
 import { COLOR, ICON } from "../theme";
 import { Spinner } from "./Spinner";
 
-export function Results({ active }: { active: boolean }) {
+export function Trending({ active }: { active: boolean }) {
   const store = useStore();
-  const { config, registry, sort, filters, submittedQuery, listRows, cols } = store;
+  const { config, registry, listRows, cols } = store;
 
   const enabledSources = useMemo(
     () =>
@@ -22,24 +24,18 @@ export function Results({ active }: { active: boolean }) {
     [registry, config],
   );
 
-  const search = useConcurrentSearch(submittedQuery, enabledSources, (s) =>
-    activeMirror(s, config),
-  );
+  const trending = useTrending(enabledSources, (s) => activeMirror(s, config));
 
-  // Filter first, then sort, over the deduped/streamed result set.
-  const filtered = useMemo(
-    () => applyFilters(search.results, filters),
-    [search.results, filters],
-  );
+  const [category, setCategory] = useState(0);
+  const categoryKey = TRENDING_CATEGORIES[category]!.category;
   const results = useMemo(
-    () => (sort === "default" ? filtered : sortResults(filtered, sort)),
-    [filtered, sort],
+    () => filterByCategory(trending.results, categoryKey),
+    [trending.results, categoryKey],
   );
-  const totalCount = search.results.length;
-  const filterActive = store.activeFilterCount > 0;
+  const totalCount = trending.results.length;
 
   const [cursor, setCursor] = useState(0);
-  useEffect(() => setCursor(0), [submittedQuery]);
+  useEffect(() => setCursor(0), [category]);
   useEffect(() => {
     if (cursor >= results.length) setCursor(Math.max(0, results.length - 1));
   }, [results.length, cursor]);
@@ -53,7 +49,6 @@ export function Results({ active }: { active: boolean }) {
   const [picker, setPicker] = useState<{ result: TorrentResult; cursor: number } | null>(
     null,
   );
-  // A picker is only meaningful while the providers it lists stay configured.
   useEffect(() => {
     if (picker && configured.length < 2) setPicker(null);
   }, [picker, configured.length]);
@@ -80,17 +75,17 @@ export function Results({ active }: { active: boolean }) {
         return;
       }
 
-      // Filter/sort cycle keys work even with no visible rows, so the user can
-      // always relax filters that hid everything.
-      if (input === "s") return void store.cycleSort();
-      if (input === "t") return void store.cycleTimeFilter();
-      if (input === "z") return void store.cycleSizeFilter();
-      if (input === "x") return void store.cycleSeederFilter();
-      if (input === "r") return void store.resetFilters();
-      if (results.length === 0) {
-        if (key.return) store.focusSearch();
+      // Category switching works even with no visible rows.
+      if (key.leftArrow) return void setCategory((c) => Math.max(0, c - 1));
+      if (key.rightArrow)
+        return void setCategory((c) => Math.min(TRENDING_CATEGORIES.length - 1, c + 1));
+      if (/^[1-9]$/.test(input)) {
+        const n = Number(input) - 1;
+        if (n < TRENDING_CATEGORIES.length) setCategory(n);
         return;
       }
+
+      if (results.length === 0) return;
       if (key.downArrow || input === "j") setCursor((c) => Math.min(results.length - 1, c + 1));
       else if (key.upArrow || input === "k") setCursor((c) => Math.max(0, c - 1));
       else if (input === "g") setCursor(0);
@@ -104,7 +99,6 @@ export function Results({ active }: { active: boolean }) {
         const r = results[cursor];
         if (!r) return;
         if (configured.length >= 2) {
-          // Pre-select the preferred provider when one is set.
           const preferred = store.config.debrid?.preferred;
           const pre = configured.findIndex((p) => p.id === preferred);
           setPicker({ result: r, cursor: pre === -1 ? 0 : pre });
@@ -116,54 +110,61 @@ export function Results({ active }: { active: boolean }) {
     { isActive: active },
   );
 
-  const failed = Object.entries(search.perSource).filter(([, st]) => st.error);
-  const start = Math.max(0, Math.min(cursor - Math.floor(listRows / 2), Math.max(0, results.length - listRows)));
-  const visible = results.slice(start, start + listRows);
-  // Fixed columns: pointer(2) + seeders(6) + size(11) + date(9) + source(10)
-  // = 38, plus 2px outer padding. Reserve them so the name column truncates
-  // instead of pushing the trailing columns off-screen.
+  const failed = Object.entries(trending.perSource).filter(([, st]) => st.error);
+  // Two header lines (status + chips) vs Results' one, so trim one row.
+  const capacity = Math.max(3, listRows - 1);
+  const start = Math.max(
+    0,
+    Math.min(cursor - Math.floor(capacity / 2), Math.max(0, results.length - capacity)),
+  );
+  const visible = results.slice(start, start + capacity);
   const nameW = Math.max(20, cols - 49);
 
   return (
     <Box flexDirection="column" flexGrow={1}>
       <Box justifyContent="space-between">
         <Box>
-          {search.loading ? (
-            <Spinner label={`searching ${search.done}/${search.total}`} />
+          {trending.loading ? (
+            <Spinner label={`gathering trending ${trending.done}/${trending.total}`} />
           ) : (
             <Text color={COLOR.alt}>
-              {filterActive ? (
+              {categoryKey === "all" ? (
                 <>
-                  {results.length} of {totalCount} result{totalCount === 1 ? "" : "s"}
+                  {results.length} trending result{results.length === 1 ? "" : "s"}
                 </>
               ) : (
                 <>
-                  {results.length} result{results.length === 1 ? "" : "s"}
+                  {results.length} of {totalCount} trending
                 </>
               )}{" "}
-              · {search.total} source{search.total === 1 ? "" : "s"}
+              · {trending.total} source{trending.total === 1 ? "" : "s"}
             </Text>
           )}
         </Box>
         <Box>
-          {filterActive ? (
-            <Text color={COLOR.dim}>
-              filter: <Text color={COLOR.warn}>{filterSummary(filters)}</Text>
-              {"   "}
-            </Text>
-          ) : null}
-          <Text color={COLOR.dim}>sort: {sortLabel(sort)}</Text>
+          <Text color={COLOR.dim}>{"\u2190\u2192"} category</Text>
         </Box>
       </Box>
 
+      <Box marginTop={1}>
+        {TRENDING_CATEGORIES.map((chip, i) => {
+          const sel = i === category;
+          return (
+            <Box key={chip.category} marginRight={1}>
+              <Text color={sel ? COLOR.accent : COLOR.dim} bold={sel}>
+                {sel ? `[${chip.label}]` : ` ${chip.label} `}
+              </Text>
+            </Box>
+          );
+        })}
+      </Box>
+
       <Box flexDirection="column" flexGrow={1} marginTop={1}>
-        {!submittedQuery ? (
-          <Text color={COLOR.dim}>Type a query and press enter to search.</Text>
-        ) : results.length === 0 && !search.loading ? (
+        {results.length === 0 && !trending.loading ? (
           <Text color={COLOR.dim}>
-            {filterActive && totalCount > 0
-              ? `No results match the active filters (${totalCount} hidden). Press r to reset.`
-              : "No results."}
+            {totalCount > 0
+              ? `No trending ${TRENDING_CATEGORIES[category]!.label} results right now.`
+              : "No trending results. Enable more sources in the Sources tab."}
           </Text>
         ) : (
           visible.map((r, i) => {

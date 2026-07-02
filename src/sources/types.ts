@@ -71,4 +71,12 @@ export interface Source {
     query: string,
     opts?: SearchOptions & { baseUrl?: string },
   ): Promise<TorrentResult[]>;
+
+  /**
+   * Return trending / popular results without a keyword query. Optional: only
+   * sources that expose a *better* browse feed than an empty-query search need
+   * implement it. Callers use `browseSource` (src/sources/trending.ts), which
+   * falls back to `search("")` when this is absent.
+   */
+  browse?(opts?: SearchOptions & { baseUrl?: string }): Promise<TorrentResult[]>;
 }

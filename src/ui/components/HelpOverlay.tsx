@@ -7,7 +7,8 @@ const GROUPS: { title: string; hints: { keys: string; label: string }[] }[] = [
     hints: [
       { keys: "\u2191 \u2193 / j k", label: "Move selection" },
       { keys: "g / G", label: "Top / bottom" },
-      { keys: "tab", label: "Search / Real-Debrid / TorBox / Sources" },
+      { keys: "tab", label: "Search / Trending / Real-Debrid / TorBox / Sources" },
+      { keys: "esc", label: "Close overlay / stop editing" },
       { keys: "a", label: "Accounts (debrid keys)" },
       { keys: "?", label: "Toggle this help" },
       { keys: "q", label: "Quit" },
@@ -16,14 +17,25 @@ const GROUPS: { title: string; hints: { keys: string; label: string }[] }[] = [
   {
     title: "Search",
     hints: [
-      { keys: "/", label: "Edit query" },
+      { keys: "/ or i", label: "Edit query" },
       { keys: "enter", label: "Run search" },
+      { keys: "esc", label: "Stop editing" },
       { keys: "s", label: "Cycle sort" },
       { keys: "t / z / x", label: "Filter date/size/seeders" },
       { keys: "r", label: "Reset filters" },
       { keys: "y", label: "Copy magnet" },
       { keys: "d / o", label: "Open magnet" },
       { keys: "b", label: "Send to debrid (pick provider)" },
+    ],
+  },
+  {
+    title: "Trending",
+    hints: [
+      { keys: "\u2190 \u2192", label: "Switch category" },
+      { keys: "1\u20137", label: "Jump to category" },
+      { keys: "y", label: "Copy magnet" },
+      { keys: "o", label: "Open magnet" },
+      { keys: "b", label: "Send to debrid" },
     ],
   },
   {
