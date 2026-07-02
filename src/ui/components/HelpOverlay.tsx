@@ -7,7 +7,7 @@ const GROUPS: { title: string; hints: { keys: string; label: string }[] }[] = [
     hints: [
       { keys: "\u2191 \u2193 / j k", label: "Move selection" },
       { keys: "g / G", label: "Top / bottom" },
-      { keys: "tab", label: "Search / Sources / Transfers" },
+      { keys: "tab", label: "Search / Real-Debrid / TorBox / Sources" },
       { keys: "a", label: "Accounts (debrid keys)" },
       { keys: "?", label: "Toggle this help" },
       { keys: "q", label: "Quit" },
@@ -36,7 +36,7 @@ const GROUPS: { title: string; hints: { keys: string; label: string }[] }[] = [
     ],
   },
   {
-    title: "Transfers",
+    title: "Debrid tabs",
     hints: [
       { keys: "l / enter", label: "Download to disk" },
       { keys: "c", label: "Cancel download" },

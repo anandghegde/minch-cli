@@ -38,7 +38,7 @@ import { Footer, type Hint } from "./components/Footer";
 import { SearchBar } from "./components/SearchBar";
 import { Results } from "./components/Results";
 import { Sources } from "./components/Sources";
-import { Transfers } from "./components/Transfers";
+import { ProviderTransfers } from "./components/ProviderTransfers";
 import { Accounts } from "./components/Accounts";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { Spinner } from "./components/Spinner";
@@ -47,7 +47,16 @@ import { useTransfers } from "./hooks/useTransfers";
 import { useDownloads } from "./hooks/useDownloads";
 import { COLOR } from "./theme";
 
-const TAB_ORDER: View[] = ["search", "sources", "transfers"];
+const TAB_ORDER: View[] = ["search", "realdebrid", "torbox", "sources"];
+
+/** User-facing tab labels, used for the footer "tab" hint. */
+const TAB_LABELS: Record<View, string> = {
+  splash: "",
+  search: "Torrent Search",
+  realdebrid: "Real-Debrid",
+  torbox: "TorBox",
+  sources: "Sources",
+};
 
 /** Turn any thrown debrid failure into a short, non-crashing notice. */
 function debridNotice(e: unknown, label: string): string {
@@ -216,6 +225,15 @@ export function App({
     return out;
   }, [perProvider]);
 
+  const transfersFor = useCallback(
+    (provider: DebridId) => transfers.filter((t) => t.provider === provider),
+    [transfers],
+  );
+  const providerConfigured = useCallback(
+    (provider: DebridId) => configuredDebrid.some((p) => p.id === provider),
+    [configuredDebrid],
+  );
+
   const sendToDebrid = useCallback(
     (result: TorrentResult, providerId?: DebridId) => {
       const cfg = configRef.current;
@@ -267,7 +285,7 @@ export function App({
                 ? `Already on ${provider.label}.`
                 : `Added to ${provider.label}.`),
           );
-          setView("transfers");
+          setView(provider.id);
           refreshTransfers();
         } catch (e) {
           setNotice(debridNotice(e, provider.label));
@@ -321,7 +339,7 @@ export function App({
       const dir = resolveDownloadDir(cfg);
       manager.start({ provider, transfer, file: target, dir });
       setNotice(`Downloading ${truncate(cleanText(target.name), 32)} → ${dir}`);
-      setView("transfers");
+      setView(transfer.provider);
     },
     [manager],
   );
@@ -563,6 +581,8 @@ export function App({
       sendToDebrid,
       refreshTransfers,
       removeTransfer,
+      transfersFor,
+      providerConfigured,
       downloads,
       downloadLocally,
       cancelDownload,
@@ -587,7 +607,8 @@ export function App({
     activeFilterCount,
     debridProviders, anyDebridConfigured, transfers, transfersLoading,
     transfersError, transfersUpdatedAt, sendToDebrid, refreshTransfers,
-    removeTransfer, accountsOpen, openAccounts, closeAccounts, debridAuth,
+    removeTransfer, transfersFor, providerConfigured,
+    accountsOpen, openAccounts, closeAccounts, debridAuth,
     checkDebridAuth, saveDebridKey,
     downloads, downloadLocally, cancelDownload, openDownload, dismissDownload,
   ]);
@@ -658,6 +679,10 @@ export function App({
     );
   }
 
+  const nextView =
+    TAB_ORDER[(TAB_ORDER.indexOf(view) + 1) % TAB_ORDER.length] ?? "search";
+  const tabHint: Hint = { keys: "tab", label: TAB_LABELS[nextView] };
+
   const footerHints: Hint[] =
     view === "sources"
       ? [
@@ -665,16 +690,17 @@ export function App({
           { keys: "e", label: "Enable" },
           { keys: "t/T", label: "Retest" },
           { keys: "m", label: "Mirror" },
-          { keys: "tab", label: "Transfers" },
+          tabHint,
           { keys: "?", label: "Keys" },
         ]
-      : view === "transfers"
+      : view === "realdebrid" || view === "torbox"
         ? [
             { keys: "\u2191\u2193", label: "Move" },
             { keys: "l", label: "Download" },
             { keys: "c", label: "Cancel" },
             { keys: "o", label: "Open" },
             { keys: "x", label: "Remove" },
+            tabHint,
             { keys: "?", label: "Keys" },
           ]
         : [
@@ -683,7 +709,7 @@ export function App({
             { keys: "b", label: "Debrid" },
             { keys: "s", label: "Sort" },
             { keys: "t/z/x", label: "Filter" },
-            { keys: "tab", label: "Sources" },
+            tabHint,
             { keys: "?", label: "Keys" },
           ];
 
@@ -718,8 +744,10 @@ export function App({
             <Box marginTop={1} flexGrow={1}>
               {view === "sources" ? (
                 <Sources active={!editing} />
-              ) : view === "transfers" ? (
-                <Transfers active={!editing} />
+              ) : view === "realdebrid" ? (
+                <ProviderTransfers provider="realdebrid" active={!editing} />
+              ) : view === "torbox" ? (
+                <ProviderTransfers provider="torbox" active={!editing} />
               ) : (
                 <Results active={!editing} />
               )}

@@ -13,7 +13,7 @@ import type {
 } from "../debrid/types";
 import type { DownloadEntry } from "../download/manager";
 
-export type View = "splash" | "search" | "sources" | "transfers";
+export type View = "splash" | "search" | "sources" | "realdebrid" | "torbox";
 
 /** Per-provider result of the most recent `checkAuth`, shown in Accounts. */
 export interface DebridAuthState {
@@ -74,6 +74,10 @@ export interface Store {
   sendToDebrid: (result: TorrentResult, providerId?: DebridId) => void;
   refreshTransfers: () => void;
   removeTransfer: (t: Transfer) => void;
+  /** The merged transfer list, filtered to a single provider (newest-first). */
+  transfersFor: (provider: DebridId) => Transfer[];
+  /** True when the given provider has a usable key right now. */
+  providerConfigured: (provider: DebridId) => boolean;
 
   // Local downloads (accelerator) -------------------------------------------
   /** Active + recent local downloads, newest-first, for inline progress bars. */

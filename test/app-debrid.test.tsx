@@ -5,9 +5,10 @@ import { createElement } from "react";
 import { App } from "../src/ui/App";
 import { configFile } from "../src/config/paths";
 
-// Integration smoke for the debrid wiring: with a TorBox key configured, the
-// Transfers view is reachable via tab and the Accounts overlay renders the
-// masked key. fetch is stubbed so the transfers poll never touches the network.
+// Integration smoke for the debrid wiring. With only a TorBox key configured,
+// tab cycles Search → Real-Debrid → TorBox → Sources: the Real-Debrid tab shows
+// unconfigured guidance while the TorBox tab shows its own (empty) transfers.
+// fetch is stubbed so the transfers poll never touches the network.
 function torboxStub(): typeof fetch {
   return vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
@@ -32,6 +33,7 @@ async function settle(ms = 60): Promise<void> {
 describe("App debrid integration", () => {
   beforeEach(async () => {
     delete process.env.MINCH_TORBOX_KEY;
+    delete process.env.MINCH_REALDEBRID_KEY;
     vi.stubGlobal("fetch", torboxStub());
     await fs.mkdir(configFile.replace(/\/[^/]+$/, ""), { recursive: true });
     await fs.writeFile(
@@ -47,16 +49,38 @@ describe("App debrid integration", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("tabs to Transfers and opens the Accounts overlay with a masked key", async () => {
+  it("cycles the provider tabs, scoping guidance per provider", async () => {
     const { lastFrame, stdin, unmount } = render(createElement(App, { onQuit: () => {} }));
     await settle(800); // boot: loadConfig + buildRegistry
 
-    // search -> sources -> transfers
+    // search -> realdebrid: Real-Debrid has no key, so it prompts to add one.
     stdin.write("\t");
     await settle();
+    const rdFrame = lastFrame() ?? "";
+    expect(rdFrame).toMatch(/real ?debrid/i);
+    expect(rdFrame.toLowerCase()).toContain("configured");
+    // No TorBox-only messaging is bleeding into the Real-Debrid tab.
+    expect(rdFrame).not.toContain("No TorBox transfers");
+
+    // realdebrid -> torbox: TorBox is configured but empty.
     stdin.write("\t");
     await settle();
-    expect(lastFrame() ?? "").toMatch(/transfer/i);
+    const tbFrame = lastFrame() ?? "";
+    expect(tbFrame).toContain("TorBox");
+    expect(tbFrame.toLowerCase()).toMatch(/transfer/);
+    expect(tbFrame).toContain("No TorBox transfers");
+
+    // torbox -> sources.
+    stdin.write("\t");
+    await settle();
+    expect((lastFrame() ?? "").toLowerCase()).toMatch(/source/);
+
+    unmount();
+  });
+
+  it("opens the Accounts overlay with a masked TorBox key", async () => {
+    const { lastFrame, stdin, unmount } = render(createElement(App, { onQuit: () => {} }));
+    await settle(800); // boot: loadConfig + buildRegistry
 
     // Open Accounts: shows the provider and the key masked to its last 4 chars.
     stdin.write("a");

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { useStore } from "../store";
 import { formatBytes, formatRelative, truncate, cleanText } from "../../util/format";
-import type { Transfer, TransferFile, TransferStatus } from "../../debrid/types";
+import type { DebridId, Transfer, TransferFile, TransferStatus } from "../../debrid/types";
 import { PROVIDER_LABELS } from "../../debrid/types";
 import type { DownloadEntry, DownloadStatus } from "../../download/manager";
 import { COLOR, ICON } from "../theme";
@@ -121,17 +121,31 @@ interface FilePicker {
   cursor: number;
 }
 
-export function Transfers({ active }: { active: boolean }) {
+/**
+ * Transfers for a single debrid provider. Mounted per-view (one instance for
+ * Real-Debrid, one for TorBox), so its cursor/picker state is naturally scoped.
+ * Reads the shared, merged poll from the store and filters to `provider`.
+ */
+export function ProviderTransfers({
+  provider,
+  active,
+}: {
+  provider: DebridId;
+  active: boolean;
+}) {
   const store = useStore();
-  const {
-    transfers,
-    transfersLoading,
-    transfersError,
-    transfersUpdatedAt,
-    downloads,
-    listRows,
-    cols,
-  } = store;
+  const { transfersLoading, transfersUpdatedAt, downloads, listRows, cols } = store;
+
+  const label = PROVIDER_LABELS[provider];
+  const configured = store.providerConfigured(provider);
+  const error = store.transfersError[provider] ?? null;
+  const transfers = useMemo(() => store.transfersFor(provider), [store, provider]);
+
+  // Only this provider's downloads (matched by the transfer ids we hold).
+  const providerDownloads = useMemo(() => {
+    const ids = new Set(transfers.map((t) => t.id));
+    return downloads.filter((d) => ids.has(d.transferId));
+  }, [downloads, transfers]);
 
   const [cursor, setCursor] = useState(0);
   const [picker, setPicker] = useState<FilePicker | null>(null);
@@ -181,12 +195,14 @@ export function Transfers({ active }: { active: boolean }) {
       if (input === "a") return void store.openAccounts();
 
       if (input === "c") {
-        const forCurrent = downloads.find(
+        const forCurrent = providerDownloads.find(
           (d) =>
             (d.status === "active" || d.status === "queued") &&
             (!current || d.transferId === current.id),
         );
-        const fallback = downloads.find((d) => d.status === "active" || d.status === "queued");
+        const fallback = providerDownloads.find(
+          (d) => d.status === "active" || d.status === "queued",
+        );
         const target = forCurrent ?? fallback;
         if (target) store.cancelDownload(target.id);
         else store.setNotice("No active download to cancel.");
@@ -194,9 +210,9 @@ export function Transfers({ active }: { active: boolean }) {
       }
       if (input === "o") {
         const doneForCurrent = current
-          ? downloads.find((d) => d.status === "done" && d.transferId === current.id)
+          ? providerDownloads.find((d) => d.status === "done" && d.transferId === current.id)
           : undefined;
-        const target = doneForCurrent ?? downloads.find((d) => d.status === "done");
+        const target = doneForCurrent ?? providerDownloads.find((d) => d.status === "done");
         if (target) store.openDownload(target);
         else store.setNotice("No finished download to open.");
         return;
@@ -216,10 +232,8 @@ export function Transfers({ active }: { active: boolean }) {
     { isActive: active },
   );
 
-  const errors = Object.entries(transfersError).filter(([, e]) => e);
-
   // Reserve rows for the downloads panel + picker so nothing overflows.
-  const shownDownloads = useMemo(() => downloads.slice(0, 5), [downloads]);
+  const shownDownloads = useMemo(() => providerDownloads.slice(0, 5), [providerDownloads]);
   const dlRows = shownDownloads.length ? shownDownloads.length + 1 : 0;
   const pickerRows = picker ? Math.min(picker.transfer.files.length + 1, 8) + 2 : 0;
   const effRows = Math.max(3, listRows - dlRows - pickerRows);
@@ -229,17 +243,20 @@ export function Transfers({ active }: { active: boolean }) {
     Math.min(cursor - Math.floor(effRows / 2), Math.max(0, transfers.length - effRows)),
   );
   const visible = transfers.slice(start, start + effRows);
-  const nameW = Math.max(14, cols - 54);
+  // No per-row provider badge in a single-provider view: reclaim the width.
+  const nameW = Math.max(14, cols - 46);
 
   return (
     <Box flexDirection="column" flexGrow={1}>
       <Box justifyContent="space-between">
         <Box>
-          {transfersLoading && transfers.length === 0 ? (
-            <Spinner label="loading transfers" />
+          {transfersLoading && transfers.length === 0 && configured ? (
+            <Spinner label={`loading ${label} transfers`} />
+          ) : !configured ? (
+            <Text color={COLOR.alt}>{label}</Text>
           ) : (
             <Text color={COLOR.alt}>
-              {transfers.length} transfer{transfers.length === 1 ? "" : "s"}
+              {label} {ICON.dot} {transfers.length} transfer{transfers.length === 1 ? "" : "s"}
               {transfersUpdatedAt
                 ? ` · updated ${formatRelative(Math.floor(transfersUpdatedAt / 1000))}`
                 : ""}
@@ -250,23 +267,22 @@ export function Transfers({ active }: { active: boolean }) {
       </Box>
 
       <Box flexDirection="column" flexGrow={1} marginTop={1}>
-        {!store.anyDebridConfigured ? (
+        {!configured ? (
           <Text color={COLOR.dim}>
-            No debrid provider configured. Press <Text color={COLOR.accent}>a</Text> to add a
-            TorBox or Real Debrid key in Accounts.
+            {label} isn't configured. Press <Text color={COLOR.accent}>a</Text> to add a key in
+            Accounts.
           </Text>
         ) : transfers.length === 0 && !transfersLoading ? (
           <Text color={COLOR.dim}>
-            No transfers yet. Press <Text color={COLOR.accent}>b</Text> on a search result to send
-            one to debrid.
+            No {label} transfers yet. Press <Text color={COLOR.accent}>b</Text> on a search result
+            to send one here.
           </Text>
         ) : (
           visible.map((t, i) => {
             const idx = start + i;
             const sel = idx === cursor;
             const g = statusGlyph(t.status);
-            const badge = PROVIDER_LABELS[t.provider] ?? t.provider;
-            const busy = downloads.some(
+            const busy = providerDownloads.some(
               (d) => d.transferId === t.id && (d.status === "active" || d.status === "queued"),
             );
             return (
@@ -278,9 +294,6 @@ export function Transfers({ active }: { active: boolean }) {
                     {busy ? `${ICON.down} ` : ""}
                     {truncate(cleanText(t.name), nameW)}
                   </Text>
-                </Box>
-                <Box width={8}>
-                  <Text color={COLOR.dim}> {truncate(badge, 7)}</Text>
                 </Box>
                 <Box width={13}>
                   {t.status === "done" ? (
@@ -360,14 +373,10 @@ export function Transfers({ active }: { active: boolean }) {
         </Box>
       ) : null}
 
-      {errors.length > 0 ? (
+      {error ? (
         <Box>
           <Text color={COLOR.dim}>
-            {ICON.warn}{" "}
-            {truncate(
-              errors.map(([id, e]) => `${PROVIDER_LABELS[id as keyof typeof PROVIDER_LABELS] ?? id}: ${e}`).join("  ·  "),
-              cols - 4,
-            )}
+            {ICON.warn} {truncate(`${label}: ${error}`, cols - 4)}
           </Text>
         </Box>
       ) : null}
