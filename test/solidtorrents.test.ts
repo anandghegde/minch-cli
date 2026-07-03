@@ -45,7 +45,11 @@ describe("solidtorrents source", () => {
     expect(r.seeders).toBe(14);
     expect(r.source).toBe("solidtorrents");
     expect(r.magnet).toContain("xt=urn:btih:0e36a32d0b43e510bf772e33733c9ecca708c35d");
-    expect(r.added).toBe(Math.floor(Date.parse(SAMPLE.results[0]!.updatedAt!) / 1000));
+    // SolidTorrents' `updatedAt` is the indexer's re-index time, not the
+    // torrent publish date (every row refreshes within minutes of now). It must
+    // not be mapped to `added`, or old torrents show "10m ago" and leak through
+    // the date filter.
+    expect(r.added).toBeUndefined();
   });
 
   it("honors the limit option", async () => {
