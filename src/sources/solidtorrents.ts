@@ -1,4 +1,4 @@
-import { applyLimit, fetchFirstOk, makeResult, runProbe, toUnixSeconds, type SourceIdentity } from "./adapter";
+import { applyLimit, fetchFirstOk, makeResult, runProbe, type SourceIdentity } from "./adapter";
 import { buildMagnet } from "./magnet";
 import type { SearchOptions, Source, TestResult, TorrentResult } from "./types";
 
@@ -26,6 +26,12 @@ interface SolidResult {
   size?: number;
   seeders?: number;
   leechers?: number;
+  // SolidTorrents exposes only `updatedAt`, which is the indexer's last
+  // re-index/swarm-stat refresh time — NOT the torrent's publish date. Every
+  // row refreshes within minutes of now, so mapping it to `added` made
+  // genuinely old torrents show "10m ago" and bypass the date filter. The API
+  // offers no creation date, so we leave `added` undefined (row stays, just
+  // undated, like a Cardigann source whose def has no date field).
   updatedAt?: string;
 }
 
@@ -48,7 +54,9 @@ function toResults(json: SolidResponse): TorrentResult[] {
         seeders: item.seeders ?? 0,
         leechers: item.leechers ?? 0,
         magnet: buildMagnet(infoHash, name),
-        added: toUnixSeconds(item.updatedAt),
+        // Deliberately omitted: the API's `updatedAt` is a re-index timestamp,
+        // not a publish date (see SolidResult). Leaving `added` unset keeps old
+        // torrents from masquerading as recent.
       }),
     );
   }
