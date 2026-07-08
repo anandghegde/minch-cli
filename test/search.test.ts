@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dedupe, defaultOrder, nextSort, sortResults } from "../src/sources/search";
+import { dedupe, defaultOrder, nextSort, sortLabel, sortResults } from "../src/sources/search";
 import type { TorrentResult } from "../src/sources/types";
 
 function r(over: Partial<TorrentResult>): TorrentResult {
@@ -69,5 +69,16 @@ describe("sorting", () => {
     // cycle all the way around back to default
     for (let i = 0; i < 5; i++) s = nextSort(s);
     expect(s).toBe("default");
+  });
+});
+
+describe("sortLabel", () => {
+  it("labels the default state as relevance", () => {
+    expect(sortLabel("default")).toBe("relevance");
+  });
+
+  it("labels an explicit sort with a direction arrow", () => {
+    expect(sortLabel({ field: "seeders", dir: "desc" })).toBe("seeders \u25be");
+    expect(sortLabel({ field: "size", dir: "asc" })).toBe("size \u25b4");
   });
 });

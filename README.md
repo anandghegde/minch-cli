@@ -21,7 +21,8 @@ Prowlarr**. Prowlarr exposes hundreds of indexers, but the overwhelming
 majority are private trackers that need accounts. minch-cli deliberately ships
 **only the `type: public` indexers** — the ones that work with zero config (The
 Pirate Bay, YTS, Nyaa, 1337x, LimeTorrents, RuTor, Torrent9, …) — plus a few
-native API/RSS sources, all behind one interface.
+native API/RSS sources (FitGirl Repacks for games, Bitsearch for general
+meta-search), all behind one interface.
 
 Prowlarr's indexers are defined as **Cardigann YAML** (search URL templates +
 CSS/XPath scrape rules + a `links:` list of mirror URLs per site). minch-cli
@@ -37,7 +38,13 @@ time and never enabled.
   (kept visible under "Unavailable").
 - **Unified search.** Type a query, hit enter, and every working source is
   searched at once. Results stream in, are de-duplicated by info hash (or
-  title+size), and sorted by seeders.
+  title+size), and ordered by a smart relevance rank.
+- **Smart relevance ranking.** The default order scores each result by seeders,
+  peer-health ratio, source trust, quality, freshness, and intent match — not
+  just seeders. Searching `anime`, `kdrama`, `bollywood`, or a language name
+  strips that hint and boosts the right sources (Nyaa for anime, YTS for movies,
+  EZTV for TV, FitGirl for games, The Pirate Bay for Indian content). Press `s`
+  to cycle to a plain seeders/size/date/source sort.
 - **Mirror switching.** Many sources ship multiple mirror URLs. The Sources
   screen lets you switch the active mirror and retest.
 - **Sources management.** See each source's status (working / failed / needs

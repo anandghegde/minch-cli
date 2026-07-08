@@ -78,7 +78,9 @@ export function nextSort(
 }
 
 export function sortLabel(sort: SortState | "default"): string {
-  if (sort === "default") return "default";
+  // "default" is the intent-aware relevance rank (see src/sources/ranking.ts),
+  // not a plain seeders sort — label it so the UI reflects that.
+  if (sort === "default") return "relevance";
   const arrow = sort.dir === "asc" ? "\u25b4" : "\u25be";
   return `${sort.field} ${arrow}`;
 }

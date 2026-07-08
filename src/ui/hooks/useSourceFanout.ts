@@ -45,17 +45,23 @@ function idle(total: number): FanoutState {
  *   in a ref, so a fresh closure each render is fine and never re-triggers.
  * @param depKey   changing this string re-runs the fan-out (alongside the
  *   source id set)
+ * @param order    orders the streamed, deduped results each time a source
+ *   settles. Defaults to defaultOrder (seeders); keyword search passes an
+ *   intent-aware relevance rank. Kept in a ref so it never re-triggers.
  */
 export function useSourceFanout(
   sources: Source[],
   active: boolean,
   fetchOne: (source: Source, signal: AbortSignal) => Promise<TorrentResult[]>,
   depKey: string,
+  order: (results: TorrentResult[]) => TorrentResult[] = defaultOrder,
 ): FanoutState {
   const [state, setState] = useState<FanoutState>(() => idle(sources.length));
-  // Keep fetchOne stable across renders without re-triggering the effect.
+  // Keep fetchOne/order stable across renders without re-triggering the effect.
   const fetchRef = useRef(fetchOne);
   fetchRef.current = fetchOne;
+  const orderRef = useRef(order);
+  orderRef.current = order;
   const ids = sources.map((s) => s.id).join(",");
 
   useEffect(() => {
@@ -124,7 +130,7 @@ export function useSourceFanout(
       }
       done += 1;
       setState({
-        results: defaultOrder(dedupe(collected.slice())),
+        results: orderRef.current(dedupe(collected.slice())),
         perSource: { ...per },
         loading: done < sources.length,
         done,
