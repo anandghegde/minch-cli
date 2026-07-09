@@ -21,7 +21,8 @@ Prowlarr**. Prowlarr exposes hundreds of indexers, but the overwhelming
 majority are private trackers that need accounts. minch-cli deliberately ships
 **only the `type: public` indexers** — the ones that work with zero config (The
 Pirate Bay, YTS, Nyaa, 1337x, LimeTorrents, RuTor, Torrent9, …) — plus a few
-native API/RSS sources, all behind one interface.
+native API/RSS sources (FitGirl Repacks for games, Bitsearch for general
+meta-search), all behind one interface.
 
 Prowlarr's indexers are defined as **Cardigann YAML** (search URL templates +
 CSS/XPath scrape rules + a `links:` list of mirror URLs per site). minch-cli

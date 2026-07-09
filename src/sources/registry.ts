@@ -5,12 +5,23 @@ import { thepiratebay } from "./apibay";
 import { yts } from "./yts";
 import { nyaa } from "./nyaa";
 import { solidtorrents } from "./solidtorrents";
+import { fitgirl } from "./fitgirl";
+import { bitsearch } from "./bitsearch";
 import type { Config } from "../config/config";
 import type { Source } from "./types";
 
 // Native sources are first-class and always present. They sit alongside the
 // Cardigann-interpreted public definitions behind the same Source interface.
-const NATIVE_SOURCES: readonly Source[] = [thepiratebay, yts, nyaa, solidtorrents];
+// FitGirl (games) and Bitsearch (meta-search) fill gaps not covered by the
+// bundled Cardigann definitions.
+const NATIVE_SOURCES: readonly Source[] = [
+  thepiratebay,
+  yts,
+  nyaa,
+  solidtorrents,
+  fitgirl,
+  bitsearch,
+];
 
 export interface Registry {
   /** All known sources (native + cardigann + user torznab), by id. */
