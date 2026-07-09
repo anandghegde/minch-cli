@@ -73,4 +73,59 @@ describe("config persistence", () => {
     expect(cfg.debrid?.torbox?.apiKey).toBe("k");
     expect(cfg.debrid?.downloadDir).toBe("/tmp/x");
   });
+
+  it("round-trips relevance flags and coerces only true booleans", async () => {
+    await saveConfig({
+      ...defaultConfig,
+      firstRunDone: true,
+      relevance: {
+        preferQuality: true,
+        hideTrash: true,
+        strictAnd: true,
+      },
+    });
+    const cfg = await loadConfig();
+    expect(cfg.relevance).toEqual({
+      preferQuality: true,
+      hideTrash: true,
+      strictAnd: true,
+    });
+  });
+
+  it("omits relevance block when all flags are false/missing/noise", async () => {
+    await fs.mkdir(configFile.replace(/\/[^/]+$/, ""), { recursive: true });
+    await fs.writeFile(
+      configFile,
+      JSON.stringify({
+        firstRunDone: true,
+        sources: {},
+        torznab: [],
+        relevance: {
+          preferQuality: false,
+          hideTrash: "yes",
+          strictAnd: 1,
+          unknown: true,
+        },
+      }),
+      "utf8",
+    );
+    const cfg = await loadConfig();
+    expect(cfg.relevance).toBeUndefined();
+  });
+
+  it("keeps only the true relevance flags when mixed", async () => {
+    await fs.mkdir(configFile.replace(/\/[^/]+$/, ""), { recursive: true });
+    await fs.writeFile(
+      configFile,
+      JSON.stringify({
+        firstRunDone: true,
+        sources: {},
+        torznab: [],
+        relevance: { preferQuality: true, hideTrash: false, strictAnd: true },
+      }),
+      "utf8",
+    );
+    const cfg = await loadConfig();
+    expect(cfg.relevance).toEqual({ preferQuality: true, strictAnd: true });
+  });
 });

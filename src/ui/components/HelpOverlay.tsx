@@ -22,10 +22,13 @@ const GROUPS: { title: string; hints: { keys: string; label: string }[] }[] = [
       { keys: "esc", label: "Stop editing" },
       { keys: "s", label: "Cycle sort" },
       { keys: "t / z / x", label: "Filter date/size/seeders" },
+      { keys: "f", label: "Match mode soft/strict" },
       { keys: "r", label: "Reset filters" },
       { keys: "y", label: "Copy magnet" },
       { keys: "d / o", label: "Open magnet" },
       { keys: "b", label: "Send to debrid (pick provider)" },
+      { keys: '"phrase"', label: "Require contiguous words" },
+      { keys: "-word / !word", label: "Exclude token from results" },
     ],
   },
   {

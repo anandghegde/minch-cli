@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { errorToCode } from "../../sources/adapter";
 import { dedupe, defaultOrder } from "../../sources/search";
+import { rankResults } from "../../sources/relevance";
 import { mapPool } from "../../util/concurrency";
 import type { Source, TorrentResult } from "../../sources/types";
 
@@ -123,8 +124,17 @@ export function useSourceFanout(
         per[source.id] = { loading: false, error: "no response", code: "no response", count: 0 };
       }
       done += 1;
+      const deduped = dedupe(collected.slice());
+      // Keyword search passes the user query as depKey; trending/browse passes
+      // a non-query sentinel (or empty). rankResults falls back to seeders
+      // order when the query has no tokens — but for the explicit trending
+      // sentinel we keep legacy defaultOrder so a random word never re-ranks browse.
+      const ordered =
+        depKey === "trending" || !depKey.trim()
+          ? defaultOrder(deduped)
+          : rankResults(deduped, depKey);
       setState({
-        results: defaultOrder(dedupe(collected.slice())),
+        results: ordered,
         perSource: { ...per },
         loading: done < sources.length,
         done,

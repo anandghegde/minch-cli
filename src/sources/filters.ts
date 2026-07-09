@@ -1,12 +1,14 @@
 import type { TorrentResult } from "./types";
+import type { RelevanceConfig } from "../config/config";
 
 /**
  * Client-side result filtering. These filters run in the UI layer over the
  * already-deduped/sorted result set — they never push down into the per-source
  * `search()` calls. Keep everything here pure and unit-testable.
  *
- * Deliberately small: three cycle-able dimensions (date, size, seeders) that
- * mirror the sort UX. Each has a fixed cycle of presets and a compact label.
+ * Deliberately small: cycle-able dimensions (date, size, seeders, match mode)
+ * that mirror the sort UX. Each has a fixed cycle of presets and a compact label.
+ * `hideTrash` is session state seeded from config (not a dedicated key).
  *
  * (Distinct from src/cardigann/filters.ts, which transforms scraped field
  * strings during source execution.)
@@ -60,6 +62,21 @@ export const SEEDER_PRESETS: SeederPreset[] = [
   { label: ">=50", min: 50 },
 ];
 
+/**
+ * Text-match strictness. Soft keeps partial/none rows sunk; strict hides tier < 2
+ * (Jackett andmatch-style). Applied in the ranker, not `applyFilters`.
+ */
+export interface MatchPreset {
+  label: string;
+  /** When true, only full-AND (tier ≥ 2) rows remain. */
+  strict: boolean;
+}
+
+export const MATCH_PRESETS: MatchPreset[] = [
+  { label: "soft", strict: false },
+  { label: "strict", strict: true },
+];
+
 export interface FilterState {
   /** Index into TIME_PRESETS. */
   time: number;
@@ -67,18 +84,55 @@ export interface FilterState {
   size: number;
   /** Index into SEEDER_PRESETS. */
   seeders: number;
+  /** Index into MATCH_PRESETS (soft / strict AND). */
+  match: number;
+  /**
+   * When true, hide trash releases (CAM/TS/SAMPLE/…). Seeded from
+   * `config.relevance.hideTrash`; not a dedicated cycle key.
+   */
+  hideTrash: boolean;
 }
 
-export const emptyFilters: FilterState = { time: 0, size: 0, seeders: 0 };
+export const emptyFilters: FilterState = {
+  time: 0,
+  size: 0,
+  seeders: 0,
+  match: 0,
+  hideTrash: false,
+};
+
+/**
+ * Build session filter defaults from `config.relevance`. Used on boot and when
+ * the user hits `r` so config-backed flags survive a soft reset.
+ */
+export function filtersFromConfig(relevance?: RelevanceConfig): FilterState {
+  return {
+    ...emptyFilters,
+    match: relevance?.strictAnd === true ? 1 : 0,
+    hideTrash: relevance?.hideTrash === true,
+  };
+}
 
 /** True when the filter set would let everything through unchanged. */
 export function isEmptyFilters(f: FilterState): boolean {
-  return f.time === 0 && f.size === 0 && f.seeders === 0;
+  return (
+    f.time === 0 &&
+    f.size === 0 &&
+    f.seeders === 0 &&
+    f.match === 0 &&
+    !f.hideTrash
+  );
 }
 
-/** Count active (non-"any") filter dimensions, for UI badges. */
+/** Count active (non-default) filter dimensions, for UI badges. */
 export function activeFilterCount(f: FilterState): number {
-  return (f.time > 0 ? 1 : 0) + (f.size > 0 ? 1 : 0) + (f.seeders > 0 ? 1 : 0);
+  return (
+    (f.time > 0 ? 1 : 0) +
+    (f.size > 0 ? 1 : 0) +
+    (f.seeders > 0 ? 1 : 0) +
+    (f.match > 0 ? 1 : 0) +
+    (f.hideTrash ? 1 : 0)
+  );
 }
 
 /** Advance one dimension to its next preset, wrapping around. */
@@ -91,20 +145,29 @@ export function cycleSize(f: FilterState): FilterState {
 export function cycleSeeders(f: FilterState): FilterState {
   return { ...f, seeders: (f.seeders + 1) % SEEDER_PRESETS.length };
 }
+/** Cycle match mode: soft ↔ strict (Jackett andmatch-style). */
+export function cycleMatch(f: FilterState): FilterState {
+  return { ...f, match: (f.match + 1) % MATCH_PRESETS.length };
+}
 
-/** Compact human summary of the active filters, e.g. "week · 1-5GB · >=5". */
+/** Compact human summary of the active filters, e.g. "week · 1-5GB · >=5 · strict". */
 export function filterSummary(f: FilterState): string {
   const parts: string[] = [];
   if (f.time > 0) parts.push(TIME_PRESETS[f.time]!.label);
   if (f.size > 0) parts.push(SIZE_PRESETS[f.size]!.label);
   if (f.seeders > 0) parts.push(SEEDER_PRESETS[f.seeders]!.label);
+  if (f.match > 0) parts.push(`match:${MATCH_PRESETS[f.match]!.label}`);
+  if (f.hideTrash) parts.push("no-trash");
   return parts.join(" \u00b7 ");
 }
 
 /**
- * Apply the filter set to a result list. Pure: never mutates the input and
- * returns the same array instance when no filter is active (cheap passthrough).
+ * Apply time/size/seeder filters. Pure: never mutates the input and returns the
+ * same array instance when no dimension of those three is active.
  * Results with no `added` are kept even when a time window is active.
+ *
+ * Match-mode / hideTrash are **not** applied here — they need the query and live
+ * in `rankResults` / `filterByRelevance` so tier scoring stays in one place.
  *
  * @param now Unix seconds reference for time windows; injectable for tests.
  */
@@ -113,7 +176,9 @@ export function applyFilters(
   filters: FilterState,
   now: number = Math.floor(Date.now() / 1000),
 ): TorrentResult[] {
-  if (isEmptyFilters(filters)) return results;
+  const timeSizeSeedersIdle =
+    filters.time === 0 && filters.size === 0 && filters.seeders === 0;
+  if (timeSizeSeedersIdle) return results;
 
   const time = TIME_PRESETS[filters.time]!;
   const size = SIZE_PRESETS[filters.size]!;

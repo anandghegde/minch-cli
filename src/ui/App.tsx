@@ -6,9 +6,11 @@ import { probeAll, probeSource } from "../sources/health";
 import { nextSort, type SortState } from "../sources/search";
 import {
   emptyFilters,
+  filtersFromConfig,
   cycleTime,
   cycleSize,
   cycleSeeders,
+  cycleMatch,
   activeFilterCount as countFilters,
   type FilterState,
 } from "../sources/filters";
@@ -139,6 +141,7 @@ export function App({
       if (cfg.firstRunDone) {
         setConfigState(cfg);
         configRef.current = cfg;
+        setFilters(filtersFromConfig(cfg.relevance));
         setView("search");
         if (initialQuery?.trim()) setSubmittedQuery(initialQuery.trim());
         return;
@@ -169,6 +172,7 @@ export function App({
       if (!alive) return;
       const next: Config = { ...cfg, sources: { ...cfg.sources, ...working }, firstRunDone: true };
       persist(next);
+      setFilters(filtersFromConfig(next.relevance));
       // Brief pause so the user sees the "Ready" state, then enter.
       setTimeout(() => {
         if (!alive) return;
@@ -204,7 +208,12 @@ export function App({
   const cycleTimeFilter = useCallback(() => setFilters((f) => cycleTime(f)), []);
   const cycleSizeFilter = useCallback(() => setFilters((f) => cycleSize(f)), []);
   const cycleSeederFilter = useCallback(() => setFilters((f) => cycleSeeders(f)), []);
-  const resetFilters = useCallback(() => setFilters(emptyFilters), []);
+  const cycleMatchFilter = useCallback(() => setFilters((f) => cycleMatch(f)), []);
+  // Reset returns to config-seeded defaults (not a hard empty), so
+  // relevance.strictAnd / hideTrash in config.json stay effective after `r`.
+  const resetFilters = useCallback(() => {
+    setFilters(filtersFromConfig(configRef.current?.relevance));
+  }, []);
   const activeFilterCount = useMemo(() => countFilters(filters), [filters]);
 
   // Debrid providers, rebuilt whenever config changes (key edits, env). The
@@ -571,6 +580,7 @@ export function App({
       cycleTimeFilter,
       cycleSizeFilter,
       cycleSeederFilter,
+      cycleMatchFilter,
       resetFilters,
       activeFilterCount,
       notice,
@@ -612,8 +622,8 @@ export function App({
     config, registry, persist, view, query, submittedQuery, submitQuery, focusSearch, sort,
     cycleSort, notice, copyMagnet, openMagnet, retestSource, retestAll,
     toggleSource, setMirror, quitAll, cols, rows, listRows,
-    filters, cycleTimeFilter, cycleSizeFilter, cycleSeederFilter, resetFilters,
-    activeFilterCount,
+    filters, cycleTimeFilter, cycleSizeFilter, cycleSeederFilter, cycleMatchFilter,
+    resetFilters, activeFilterCount,
     debridProviders, anyDebridConfigured, transfers, transfersLoading,
     transfersError, transfersUpdatedAt, sendToDebrid, refreshTransfers,
     removeTransfer, transfersFor, providerConfigured,
@@ -733,7 +743,7 @@ export function App({
               { keys: "y", label: "Copy" },
               { keys: "b", label: "Debrid" },
               { keys: "s", label: "Sort" },
-              { keys: "t/z/x", label: "Filter" },
+              { keys: "t/z/x/f", label: "Filter" },
               tabHint,
               { keys: "?", label: "Keys" },
             ];

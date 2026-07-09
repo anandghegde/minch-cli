@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { dedupe, defaultOrder, nextSort, sortResults } from "../src/sources/search";
+import {
+  dedupe,
+  defaultOrder,
+  nextSort,
+  sortResults,
+  sortLabel,
+  SORT_CYCLE,
+} from "../src/sources/search";
+import { rankResults } from "../src/sources/relevance";
 import type { TorrentResult } from "../src/sources/types";
 
 function r(over: Partial<TorrentResult>): TorrentResult {
@@ -47,8 +55,25 @@ describe("sorting", () => {
     r({ infoHash: "3".repeat(40), name: "mid", seeders: 20, sizeBytes: 200, added: 300 }),
   ];
 
-  it("defaultOrder is most seeders first", () => {
+  it("defaultOrder is most seeders first (legacy / trending path)", () => {
     expect(defaultOrder(list).map((x) => x.seeders)).toEqual([50, 20, 5]);
+  });
+
+  it("keyword default path ranks by query relevance, not raw seeders", () => {
+    const mixed = [
+      r({
+        infoHash: "1".repeat(40),
+        name: "Unrelated Blockbuster 1080p",
+        seeders: 9000,
+      }),
+      r({
+        infoHash: "2".repeat(40),
+        name: "Inception 2010 1080p BluRay",
+        seeders: 3,
+      }),
+    ];
+    const ranked = rankResults(mixed, "inception");
+    expect(ranked[0]!.name).toMatch(/Inception/);
   });
 
   it("sorts by size ascending", () => {
@@ -63,11 +88,44 @@ describe("sorting", () => {
     ).toEqual([300, 200, 100]);
   });
 
-  it("nextSort cycles and wraps", () => {
-    let s = nextSort("default");
+  it("sorts by quality descending then log-seeders", () => {
+    const qlist = [
+      r({
+        infoHash: "1".repeat(40),
+        name: "Movie.2024.720p.WEBRip.x264",
+        seeders: 5000,
+      }),
+      r({
+        infoHash: "2".repeat(40),
+        name: "Movie.2024.2160p.BluRay.REMUX.HEVC",
+        seeders: 10,
+      }),
+      r({
+        infoHash: "3".repeat(40),
+        name: "Movie.2024.1080p.BluRay.x264",
+        seeders: 100,
+      }),
+    ];
+    const out = sortResults(qlist, { field: "quality", dir: "desc" });
+    expect(out.map((x) => x.name)).toEqual([
+      "Movie.2024.2160p.BluRay.REMUX.HEVC",
+      "Movie.2024.1080p.BluRay.x264",
+      "Movie.2024.720p.WEBRip.x264",
+    ]);
+  });
+
+  it("nextSort cycles through quality and wraps to default", () => {
+    let s: ReturnType<typeof nextSort> = nextSort("default");
     expect(s).toEqual({ field: "seeders", dir: "desc" });
-    // cycle all the way around back to default
-    for (let i = 0; i < 5; i++) s = nextSort(s);
+    s = nextSort(s);
+    expect(s).toEqual({ field: "quality", dir: "desc" });
+    // cycle the rest of the way around back to default
+    for (let i = 0; i < SORT_CYCLE.length - 2; i++) s = nextSort(s);
     expect(s).toBe("default");
+  });
+
+  it("sortLabel labels default as relevance", () => {
+    expect(sortLabel("default")).toBe("relevance");
+    expect(sortLabel({ field: "quality", dir: "desc" })).toBe("quality \u25be");
   });
 });

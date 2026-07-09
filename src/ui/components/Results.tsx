@@ -4,7 +4,16 @@ import { useStore } from "../store";
 import { useConcurrentSearch } from "../hooks/useConcurrentSearch";
 import { activeMirror, isEnabled } from "../../sources/registry";
 import { sortResults, sortLabel } from "../../sources/search";
-import { applyFilters, filterSummary } from "../../sources/filters";
+import {
+  filterByRelevance,
+  rankResults,
+  type RankOptions,
+} from "../../sources/relevance";
+import {
+  applyFilters,
+  filterSummary,
+  MATCH_PRESETS,
+} from "../../sources/filters";
 import { formatBytes, formatRelative, truncate, cleanText } from "../../util/format";
 import type { TorrentResult } from "../../sources/types";
 import { COLOR, ICON } from "../theme";
@@ -26,15 +35,29 @@ export function Results({ active }: { active: boolean }) {
     activeMirror(s, config),
   );
 
-  // Filter first, then sort, over the deduped/streamed result set.
+  // Rank options from config + session filter state (Phase C).
+  const rankOpts: RankOptions = useMemo(
+    () => ({
+      preferQuality: config.relevance?.preferQuality === true,
+      strictAnd: MATCH_PRESETS[filters.match]?.strict === true,
+      hideTrash: filters.hideTrash === true,
+    }),
+    [config.relevance?.preferQuality, filters.match, filters.hideTrash],
+  );
+
+  // Filter first (time/size/seeders), then relevance filters + rank/sort.
   const filtered = useMemo(
     () => applyFilters(search.results, filters),
     [search.results, filters],
   );
-  const results = useMemo(
-    () => (sort === "default" ? filtered : sortResults(filtered, sort)),
-    [filtered, sort],
-  );
+  const results = useMemo(() => {
+    if (sort === "default") {
+      return rankResults(filtered, submittedQuery, rankOpts);
+    }
+    // Manual sort still honors strict/hideTrash so filter keys stay consistent.
+    const relevanceFiltered = filterByRelevance(filtered, submittedQuery, rankOpts);
+    return sortResults(relevanceFiltered, sort);
+  }, [filtered, sort, submittedQuery, rankOpts]);
   const totalCount = search.results.length;
   const filterActive = store.activeFilterCount > 0;
 
@@ -86,6 +109,7 @@ export function Results({ active }: { active: boolean }) {
       if (input === "t") return void store.cycleTimeFilter();
       if (input === "z") return void store.cycleSizeFilter();
       if (input === "x") return void store.cycleSeederFilter();
+      if (input === "f") return void store.cycleMatchFilter();
       if (input === "r") return void store.resetFilters();
       if (results.length === 0) {
         if (key.return) store.focusSearch();
@@ -152,7 +176,12 @@ export function Results({ active }: { active: boolean }) {
               {"   "}
             </Text>
           ) : null}
-          <Text color={COLOR.dim}>sort: {sortLabel(sort)}</Text>
+          <Text color={COLOR.dim}>
+            sort: {sortLabel(sort)}
+            {config.relevance?.preferQuality === true && sort === "default"
+              ? " +quality"
+              : ""}
+          </Text>
         </Box>
       </Box>
 

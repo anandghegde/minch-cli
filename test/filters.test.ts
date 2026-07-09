@@ -2,15 +2,18 @@ import { describe, expect, it } from "vitest";
 import {
   applyFilters,
   emptyFilters,
+  filtersFromConfig,
   isEmptyFilters,
   activeFilterCount,
   filterSummary,
   cycleTime,
   cycleSize,
   cycleSeeders,
+  cycleMatch,
   TIME_PRESETS,
   SIZE_PRESETS,
   SEEDER_PRESETS,
+  MATCH_PRESETS,
   type FilterState,
 } from "../src/sources/filters";
 import type { TorrentResult } from "../src/sources/types";
@@ -29,11 +32,19 @@ function r(over: Partial<TorrentResult>): TorrentResult {
 }
 
 // Build a FilterState by preset label, so tests don't hardcode indices.
-function f(over: { time?: string; size?: string; seeders?: string }): FilterState {
+function f(over: {
+  time?: string;
+  size?: string;
+  seeders?: string;
+  match?: string;
+  hideTrash?: boolean;
+}): FilterState {
   return {
     time: over.time ? TIME_PRESETS.findIndex((p) => p.label === over.time) : 0,
     size: over.size ? SIZE_PRESETS.findIndex((p) => p.label === over.size) : 0,
     seeders: over.seeders ? SEEDER_PRESETS.findIndex((p) => p.label === over.seeders) : 0,
+    match: over.match ? MATCH_PRESETS.findIndex((p) => p.label === over.match) : 0,
+    hideTrash: over.hideTrash === true,
   };
 }
 
@@ -151,12 +162,42 @@ describe("cycle helpers", () => {
     expect(s.time).toBe(0); // wrapped back
     expect(cycleSize(emptyFilters).size).toBe(1);
     expect(cycleSeeders(emptyFilters).seeders).toBe(1);
+    expect(cycleMatch(emptyFilters).match).toBe(1);
+    expect(cycleMatch(cycleMatch(emptyFilters)).match).toBe(0);
   });
 
   it("cycling does not mutate the input", () => {
     const s = emptyFilters;
     cycleTime(s);
+    cycleMatch(s);
     expect(s.time).toBe(0);
+    expect(s.match).toBe(0);
+  });
+});
+
+describe("match / hideTrash session state", () => {
+  it("filtersFromConfig seeds strictAnd and hideTrash", () => {
+    expect(filtersFromConfig()).toEqual(emptyFilters);
+    expect(filtersFromConfig({ strictAnd: true, hideTrash: true })).toEqual({
+      ...emptyFilters,
+      match: 1,
+      hideTrash: true,
+    });
+    // preferQuality does not affect filter state (ranker-only).
+    expect(filtersFromConfig({ preferQuality: true })).toEqual(emptyFilters);
+  });
+
+  it("isEmptyFilters is false when match is strict or hideTrash is on", () => {
+    expect(isEmptyFilters(f({ match: "strict" }))).toBe(false);
+    expect(isEmptyFilters(f({ hideTrash: true }))).toBe(false);
+  });
+
+  it("applyFilters ignores match/hideTrash (time/size/seeders only)", () => {
+    const list = [r({ name: "a" }), r({ name: "b" })];
+    // Same array instance when only match/trash active — no time/size/seeders.
+    expect(applyFilters(list, f({ match: "strict", hideTrash: true }), NOW)).toBe(
+      list,
+    );
   });
 });
 
@@ -165,11 +206,15 @@ describe("helpers", () => {
     expect(activeFilterCount(emptyFilters)).toBe(0);
     expect(activeFilterCount(f({ time: "week", size: "1-5GB", seeders: ">=5" }))).toBe(3);
     expect(activeFilterCount(f({ seeders: ">0" }))).toBe(1);
+    expect(activeFilterCount(f({ match: "strict", hideTrash: true }))).toBe(2);
   });
 
   it("filterSummary renders a compact label", () => {
     const summary = filterSummary(f({ time: "week", size: "1-5GB", seeders: ">=5" }));
     expect(summary).toBe("week \u00b7 1-5GB \u00b7 >=5");
     expect(filterSummary(emptyFilters)).toBe("");
+    expect(filterSummary(f({ match: "strict", hideTrash: true }))).toBe(
+      "match:strict \u00b7 no-trash",
+    );
   });
 });

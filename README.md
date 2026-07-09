@@ -2,9 +2,9 @@
 
 A slick terminal torrent finder for **public** sources. One search hits a broad
 catalog of public torrent indexers at once, streams results as they arrive,
-sorts by seeders, and lets you copy or open a magnet. Zero setup: it ships with
-the public-indexer definitions, auto-tests them on first run, and enables only
-the ones that work.
+ranks them by relevance (text match first, then seeders), and lets you copy or
+open a magnet. Zero setup: it ships with the public-indexer definitions,
+auto-tests them on first run, and enables only the ones that work.
 
 ```
 minch
@@ -37,7 +37,9 @@ time and never enabled.
   (kept visible under "Unavailable").
 - **Unified search.** Type a query, hit enter, and every working source is
   searched at once. Results stream in, are de-duplicated by info hash (or
-  title+size), and sorted by seeders.
+  title+size), and ranked by relevance (full text match over partial, with
+  year / episode / trash signals and seeder bucketing as tiebreakers). Press
+  `s` to cycle manual sorts (seeders, quality, size, date, source).
 - **Mirror switching.** Many sources ship multiple mirror URLs. The Sources
   screen lets you switch the active mirror and retest.
 - **Sources management.** See each source's status (working / failed / needs
@@ -49,9 +51,14 @@ time and never enabled.
   it to your default torrent client.
 - **Result filters.** Cycle quick filters over the streamed results without
   re-querying: `t` cycles the publish-date window (24h/week/month/3mo/year),
-  `z` cycles a size bucket, and `x` cycles a minimum-seeders threshold. Active
-  filters show inline next to the sort label with an "N of M" count; `r` resets
-  them. Filters compose with sort (filter first, then sort).
+  `z` cycles a size bucket, `x` cycles a minimum-seeders threshold, and `f`
+  toggles match mode (soft keeps partial hits sunk; strict hides non-AND rows
+  like Jackett `andmatch`). Active filters show inline next to the sort label
+  with an "N of M" count; `r` resets them to config defaults. Filters compose
+  with sort (filter first, then sort).
+- **Relevance config** (optional, in the local JSON config under `relevance`):
+  `preferQuality` folds release quality into the default cascade after seeders;
+  `strictAnd` and `hideTrash` seed the session filters on boot.
 
 ## Usage
 
@@ -62,10 +69,14 @@ minch --version        print the version
 minch --help           show help
 ```
 
-Keys: `↑/↓` move · `enter` search · `s` sort · `t`/`z`/`x` filter date/size/seeders ·
-`r` reset filters · `y` copy magnet · `d`/`o` open magnet · `tab` switch
-Search/Sources · `e` enable · `t`/`T` retest · `m` switch mirror · `?` keys ·
-`q` quit.
+Keys: `↑/↓` move · `enter` search · `s` sort · `t`/`z`/`x`/`f` filter
+date/size/seeders/match · `r` reset filters · `y` copy magnet · `d`/`o` open
+magnet · `tab` switch Search/Sources · `e` enable · `t`/`T` retest · `m`
+switch mirror · `?` keys · `q` quit.
+
+Query operators (optional): `"exact phrase"` requires contiguous words in the
+title; `-word` or `!word` drops results containing that token (e.g.
+`"spider man" -cam`).
 
 ## Architecture
 

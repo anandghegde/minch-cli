@@ -45,6 +45,8 @@ export interface Store {
   cycleTimeFilter: () => void;
   cycleSizeFilter: () => void;
   cycleSeederFilter: () => void;
+  /** Cycle text-match mode: soft ↔ strict (hide tier &lt; 2). */
+  cycleMatchFilter: () => void;
   resetFilters: () => void;
   /** Number of active filter dimensions; 0 when nothing is filtered. */
   activeFilterCount: number;

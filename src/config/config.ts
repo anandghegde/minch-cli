@@ -33,6 +33,22 @@ export interface DebridConfig {
   downloadDir?: string;
 }
 
+/**
+ * Ranking / match preferences for keyword search (Phase C).
+ * All flags default false when omitted — keeps zero-config behavior.
+ */
+export interface RelevanceConfig {
+  /**
+   * When true, insert qualityBand into the default relevance cascade after
+   * seeder buckets (text still outranks popularity and quality).
+   */
+  preferQuality?: boolean;
+  /** When true, hide rows with trash markers (CAM/TS/SAMPLE/…). */
+  hideTrash?: boolean;
+  /** When true, hide rows that fail full text AND (tier &lt; 2). */
+  strictAnd?: boolean;
+}
+
 export interface Config {
   /** Per-source enabled/mirror/health state, keyed by source id. */
   sources: Record<string, SourceState>;
@@ -42,12 +58,20 @@ export interface Config {
   firstRunDone: boolean;
   /** Cloud debrid providers (TorBox, Real Debrid). */
   debrid?: DebridConfig;
+  /** Optional search-ranking preferences. */
+  relevance?: RelevanceConfig;
 }
 
 export const defaultConfig: Config = {
   sources: {},
   torznab: [],
   firstRunDone: false,
+};
+
+export const defaultRelevanceConfig: RelevanceConfig = {
+  preferQuality: false,
+  hideTrash: false,
+  strictAnd: false,
 };
 
 function coerceDebrid(raw: unknown): DebridConfig | undefined {
@@ -67,15 +91,31 @@ function coerceDebrid(raw: unknown): DebridConfig | undefined {
   return out;
 }
 
+function coerceRelevance(raw: unknown): RelevanceConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const out: RelevanceConfig = {};
+  if (r.preferQuality === true) out.preferQuality = true;
+  if (r.hideTrash === true) out.hideTrash = true;
+  if (r.strictAnd === true) out.strictAnd = true;
+  // Only persist a block when at least one flag is explicitly true; false/noise
+  // fields are dropped so the file stays minimal for zero-config users.
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function coerce(parsed: Partial<Config> | null): Config {
   if (!parsed || typeof parsed !== "object") return { ...defaultConfig };
   const debrid = coerceDebrid(parsed.debrid);
+  const relevance = coerceRelevance(
+    (parsed as Partial<Config> & { relevance?: unknown }).relevance,
+  );
   return {
     sources:
       parsed.sources && typeof parsed.sources === "object" ? parsed.sources : {},
     torznab: Array.isArray(parsed.torznab) ? parsed.torznab : [],
     firstRunDone: parsed.firstRunDone === true,
     ...(debrid ? { debrid } : {}),
+    ...(relevance ? { relevance } : {}),
   };
 }
 
