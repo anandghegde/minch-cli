@@ -1,0 +1,223 @@
+{
+  "snapshots": [
+    {
+      "source": "streaming-availability",
+      "feedKind": "streaming_added",
+      "titles": [
+        {
+          "id": "streaming:indian-hindi-movie",
+          "title": "Hindi Heartland",
+          "year": 2026,
+          "mediaType": "movie",
+          "tmdbId": 9101,
+          "originalLanguage": "hi",
+          "originCountries": ["IN"],
+          "genreIds": [18]
+        },
+        {
+          "id": "streaming:indian-tamil-series",
+          "title": "Tamil Coast",
+          "year": 2026,
+          "mediaType": "series",
+          "tmdbId": 9102,
+          "originalLanguage": "ta",
+          "originCountries": ["IN"],
+          "genreIds": [18]
+        },
+        {
+          "id": "streaming:indian-english-movie",
+          "title": "English in India",
+          "year": 2026,
+          "mediaType": "movie",
+          "tmdbId": 9103,
+          "originalLanguage": "en",
+          "originCountries": ["IN"],
+          "genreIds": [35]
+        },
+        {
+          "id": "streaming:non-indian-hindi",
+          "title": "Hindi Beyond India",
+          "year": 2026,
+          "mediaType": "movie",
+          "tmdbId": 9104,
+          "originalLanguage": "hi",
+          "originCountries": ["NP"],
+          "genreIds": [18]
+        },
+        {
+          "id": "streaming:global-in-india",
+          "title": "Global Arrival",
+          "year": 2026,
+          "mediaType": "movie",
+          "tmdbId": 9105,
+          "originalLanguage": "en",
+          "originCountries": ["US"],
+          "genreIds": [12]
+        },
+        {
+          "id": "streaming:missing-regional-metadata",
+          "title": "Metadata Pending",
+          "year": 2026,
+          "mediaType": "movie",
+          "tmdbId": 9106,
+          "originCountries": [],
+          "genreIds": []
+        }
+      ],
+      "events": [
+        {
+          "id": "streaming:event:indian-hindi-movie",
+          "titleId": "streaming:indian-hindi-movie",
+          "kind": "streaming_added",
+          "region": "IN",
+          "date": "2026-07-10",
+          "datePrecision": "day",
+          "providerId": "netflix",
+          "providerLabel": "Netflix",
+          "status": "today",
+          "firstObservedAt": 1783665832000,
+          "lastObservedAt": 1783665832000,
+          "evidence": [{
+            "source": "streaming-availability",
+            "sourceId": "matrix-1",
+            "observedAt": 1783665832000,
+            "confidence": "exact"
+          }]
+        },
+        {
+          "id": "streaming:event:indian-tamil-series",
+          "titleId": "streaming:indian-tamil-series",
+          "kind": "streaming_added",
+          "region": "IN",
+          "date": "2026-07-09",
+          "datePrecision": "day",
+          "providerId": "hotstar",
+          "providerLabel": "JioHotstar",
+          "audioLanguages": ["ta", "te"],
+          "status": "past",
+          "firstObservedAt": 1783665832000,
+          "lastObservedAt": 1783665832000,
+          "evidence": [{
+            "source": "streaming-availability",
+            "sourceId": "matrix-2",
+            "observedAt": 1783665832000,
+            "confidence": "exact"
+          }]
+        },
+        {
+          "id": "streaming:event:indian-english-movie",
+          "titleId": "streaming:indian-english-movie",
+          "kind": "streaming_added",
+          "region": "IN",
+          "date": "2026-07-08",
+          "datePrecision": "day",
+          "providerId": "prime",
+          "providerLabel": "Prime Video",
+          "status": "past",
+          "firstObservedAt": 1783665832000,
+          "lastObservedAt": 1783665832000,
+          "evidence": [{
+            "source": "streaming-availability",
+            "sourceId": "matrix-3",
+            "observedAt": 1783665832000,
+            "confidence": "exact"
+          }]
+        },
+        {
+          "id": "streaming:event:non-indian-hindi",
+          "titleId": "streaming:non-indian-hindi",
+          "kind": "streaming_added",
+          "region": "IN",
+          "date": "2026-07-07",
+          "datePrecision": "day",
+          "providerId": "netflix",
+          "providerLabel": "Netflix",
+          "status": "past",
+          "firstObservedAt": 1783665832000,
+          "lastObservedAt": 1783665832000,
+          "evidence": [{
+            "source": "streaming-availability",
+            "sourceId": "matrix-4",
+            "observedAt": 1783665832000,
+            "confidence": "exact"
+          }]
+        },
+        {
+          "id": "streaming:event:global-in-india",
+          "titleId": "streaming:global-in-india",
+          "kind": "streaming_added",
+          "region": "IN",
+          "date": "2026-07-06",
+          "datePrecision": "day",
+          "providerId": "localflix",
+          "providerLabel": "LocalFlix",
+          "status": "past",
+          "firstObservedAt": 1783665832000,
+          "lastObservedAt": 1783665832000,
+          "evidence": [{
+            "source": "streaming-availability",
+            "sourceId": "matrix-5",
+            "observedAt": 1783665832000,
+            "confidence": "exact"
+          }]
+        },
+        {
+          "id": "streaming:event:missing-regional-metadata",
+          "titleId": "streaming:missing-regional-metadata",
+          "kind": "streaming_added",
+          "region": "IN",
+          "date": "2026-07-05",
+          "datePrecision": "day",
+          "providerId": "prime",
+          "providerLabel": "Prime Video",
+          "status": "past",
+          "firstObservedAt": 1783665832000,
+          "lastObservedAt": 1783665832000,
+          "evidence": [{
+            "source": "streaming-availability",
+            "sourceId": "matrix-6",
+            "observedAt": 1783665832000,
+            "confidence": "exact"
+          }]
+        }
+      ],
+      "fetchedAt": 1783665832000,
+      "warnings": []
+    },
+    {
+      "source": "streaming-availability",
+      "feedKind": "provider_dictionary",
+      "titles": [],
+      "events": [],
+      "fetchedAt": 1783665832000,
+      "warnings": [],
+      "providers": [
+        {
+          "id": "netflix",
+          "label": "Netflix",
+          "upstreamAliases": ["netflix", "Netflix"]
+        },
+        {
+          "id": "hotstar",
+          "label": "Hotstar",
+          "upstreamAliases": ["hotstar", "Hotstar"]
+        },
+        {
+          "id": "hotstar",
+          "label": "JioHotstar",
+          "upstreamAliases": ["hotstar", "JioHotstar", "Disney+ Hotstar"]
+        },
+        {
+          "id": "prime",
+          "label": "Prime Video",
+          "upstreamAliases": ["prime", "Prime Video"]
+        },
+        {
+          "id": "localflix",
+          "label": "LocalFlix",
+          "upstreamAliases": ["localflix", "LocalFlix"]
+        }
+      ]
+    }
+  ]
+}

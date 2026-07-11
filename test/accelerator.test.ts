@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +10,7 @@ import {
   planChunks,
   chunkLength,
   parseContentRangeTotal,
+  parseContentRange,
   SpeedMeter,
   sanitizeFilename,
   resolveCollision,
@@ -155,6 +156,13 @@ describe("range math", () => {
     expect(parseContentRangeTotal("bytes 0-0/*")).toBeUndefined();
     expect(parseContentRangeTotal(null)).toBeUndefined();
   });
+
+  it("parses and validates complete Content-Range headers", () => {
+    expect(parseContentRange("bytes 10-19/100")).toEqual({ start: 10, end: 19, total: 100 });
+    expect(parseContentRange("bytes 10-9/100")).toBeUndefined();
+    expect(parseContentRange("bytes 0-9/*")).toEqual({ start: 0, end: 9 });
+    expect(parseContentRange("invalid")).toBeUndefined();
+  });
 });
 
 describe("SpeedMeter (EWMA)", () => {
@@ -244,6 +252,143 @@ describe("downloadFile: multi-connection", () => {
     } finally {
       await server.close();
     }
+  });
+
+  it("closes the segmented part handle before the final rename", async () => {
+    const body = crypto.randomBytes(128 * 1024);
+    const server = await startServer(body, { etag: '"v1"' });
+    const dest = path.join(dir, "close-before-rename.bin");
+    const originalOpen = fs.open;
+    const originalRename = fs.rename;
+    let partClosed = false;
+    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await originalOpen(...args);
+      const close = handle.close.bind(handle);
+      handle.close = async () => {
+        partClosed = true;
+        await close();
+      };
+      return handle;
+    });
+    vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
+      if (from === `${dest}.part`) expect(partClosed).toBe(true);
+      await originalRename(from, to);
+    });
+
+    try {
+      await downloadFile(server.url, dest, {
+        connections: 2,
+        chunkSizeBytes: 16 * 1024,
+        sleepImpl: instantSleep,
+      });
+      expect(await sha(await fs.readFile(dest))).toBe(await sha(body));
+    } finally {
+      vi.restoreAllMocks();
+      await server.close();
+    }
+  });
+
+  it("rejects a 206 response whose Content-Range does not match the requested chunk", async () => {
+    const body = Buffer.from("0123456789abcdef");
+    const dest = path.join(dir, "bad-range.bin");
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      const range = new Headers(init?.headers).get("range");
+      const match = /bytes=(\d+)-(\d+)/.exec(range ?? "");
+      const start = Number(match?.[1] ?? 0);
+      const end = Number(match?.[2] ?? 0);
+      return new Response(body.subarray(start, end + 1), {
+        status: 206,
+        headers: {
+          "content-range": `bytes ${start + 1}-${end + 1}/${body.length}`,
+          etag: '"v1"',
+        },
+      });
+    };
+
+    await expect(downloadFile("https://range.test/file", dest, {
+      connections: 1,
+      chunkSizeBytes: 8,
+      fetchImpl,
+      sleepImpl: instantSleep,
+    })).rejects.toThrow("mismatched Content-Range");
+  });
+
+  it("restarts from a fresh URL when its validator changes", async () => {
+    const oldBody = Buffer.from("aaaaaaaaaaaaaaaa");
+    const freshBody = Buffer.from("bbbbbbbbbbbbbbbb");
+    const dest = path.join(dir, "refreshed.bin");
+    let reResolves = 0;
+    let freshProbes = 0;
+    const responseFor = (body: Buffer, start: number, end: number, etag: string): Response =>
+      new Response(body.subarray(start, end + 1), {
+        status: 206,
+        headers: { "content-range": `bytes ${start}-${end}/${body.length}`, etag },
+      });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const range = new Headers(init?.headers).get("range") ?? "";
+      const match = /bytes=(\d+)-(\d+)/.exec(range);
+      const start = Number(match?.[1] ?? 0);
+      const end = Number(match?.[2] ?? 0);
+      if (url === "https://old.test/file") {
+        if (range === "bytes=8-15") return new Response(null, { status: 403 });
+        return responseFor(oldBody, start, end, '"old"');
+      }
+      if (range === "bytes=0-0") freshProbes++;
+      return responseFor(freshBody, start, end, '"fresh"');
+    };
+
+    await downloadFile("https://old.test/file", dest, {
+      connections: 2,
+      chunkSizeBytes: 8,
+      fetchImpl,
+      sleepImpl: instantSleep,
+      reResolve: async () => {
+        reResolves++;
+        return "https://fresh.test/file";
+      },
+    });
+
+    expect(reResolves).toBe(1);
+    expect(freshProbes).toBeGreaterThan(0);
+    expect(await fs.readFile(dest)).toEqual(freshBody);
+  });
+
+  it("cancels promptly while an expired link is being re-resolved", async () => {
+    const body = Buffer.from("0123456789abcdef");
+    const dest = path.join(dir, "cancel-reresolve.bin");
+    const ctrl = new AbortController();
+    let beginResolve: (() => void) | undefined;
+    const resolving = new Promise<void>((resolve) => {
+      beginResolve = resolve;
+    });
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      const range = new Headers(init?.headers).get("range");
+      if (range === "bytes=0-0") {
+        return new Response(body.subarray(0, 1), {
+          status: 206,
+          headers: { "content-range": `bytes 0-0/${body.length}`, etag: '"v1"' },
+        });
+      }
+      return new Response(null, { status: 403 });
+    };
+    const pending = downloadFile("https://old.test/file", dest, {
+      connections: 1,
+      chunkSizeBytes: 8,
+      fetchImpl,
+      signal: ctrl.signal,
+      reResolve: (signal) => new Promise<string>((_resolve, reject) => {
+        beginResolve?.();
+        signal?.addEventListener("abort", () => {
+          const error = new Error("aborted");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      }),
+    });
+
+    await resolving;
+    ctrl.abort();
+    await expect(pending).rejects.toBeInstanceOf(DownloadCanceledError);
   });
 });
 

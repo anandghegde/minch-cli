@@ -9,7 +9,7 @@ import {
   runProbe,
   toUnixSeconds,
 } from "../src/sources/adapter";
-import { HttpError } from "../src/util/net";
+import { fetchResilient, HttpError } from "../src/util/net";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -54,6 +54,12 @@ describe("applyLimit", () => {
 
   it("returns all rows when limit exceeds length", () => {
     expect(applyLimit(rows, { limit: 10 })).toEqual([1, 2, 3, 4]);
+  });
+
+  it("returns no rows for invalid or non-positive limits", () => {
+    expect(applyLimit(rows, { limit: -1 })).toEqual([]);
+    expect(applyLimit(rows, { limit: Number.NaN })).toEqual([]);
+    expect(applyLimit(rows, { limit: Number.POSITIVE_INFINITY })).toEqual([]);
   });
 });
 
@@ -149,6 +155,24 @@ describe("fetchFirstOk", () => {
     expect(out).toEqual({ host: "https://b.test/x" });
   });
 
+  it("cancels a failed host response before trying the next mirror", async () => {
+    let canceled = false;
+    const failed = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel: () => {
+          canceled = true;
+        },
+      }),
+      { status: 404 },
+    );
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      url.startsWith("https://a.test") ? failed : jsonResponse({ host: url }),
+    ));
+
+    await fetchFirstOk(["https://a.test/x", "https://b.test/x"], {}, async (r) => r.json());
+    expect(canceled).toBe(true);
+  });
+
   it("throws the last error when every host fails", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({}, 404)));
     try {
@@ -177,6 +201,31 @@ describe("fetchFirstOk", () => {
       ),
     ).rejects.toThrow();
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchResilient", () => {
+  it("cancels retryable responses before issuing the retry", async () => {
+    let canceled = false;
+    const retryable = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel: () => {
+          canceled = true;
+        },
+      }),
+      { status: 503 },
+    );
+    const fetchImpl = vi
+      .fn(async (): Promise<Response> => jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(retryable);
+
+    const res = await fetchResilient("https://x.test", {
+      fetchImpl,
+      retries: 1,
+      sleepImpl: async () => {},
+    });
+    expect(res.ok).toBe(true);
+    expect(canceled).toBe(true);
   });
 });
 

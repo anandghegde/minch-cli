@@ -59,6 +59,16 @@ describe("sorting", () => {
     expect(defaultOrder(list).map((x) => x.seeders)).toEqual([50, 20, 5]);
   });
 
+  it("uses a stable source/name/hash key when visible sort fields tie", () => {
+    const tied = [
+      r({ source: "z", name: "Same", infoHash: "b".repeat(40), seeders: 1, added: 1 }),
+      r({ source: "a", name: "Same", infoHash: "a".repeat(40), seeders: 1, added: 1 }),
+    ];
+    expect(defaultOrder(tied).map((item) => item.source)).toEqual(["a", "z"]);
+    expect(sortResults(tied, { field: "seeders", dir: "desc" }).map((item) => item.source))
+      .toEqual(["a", "z"]);
+  });
+
   it("keyword default path ranks by query relevance, not raw seeders", () => {
     const mixed = [
       r({
@@ -86,6 +96,21 @@ describe("sorting", () => {
     expect(
       sortResults(list, { field: "date", dir: "desc" }).map((x) => x.added),
     ).toEqual([300, 200, 100]);
+  });
+
+  it("sorts missing and invalid dates below known dates in both directions", () => {
+    const dates = [
+      r({ infoHash: "1".repeat(40), name: "missing" }),
+      r({ infoHash: "2".repeat(40), name: "newest", added: 300 }),
+      r({ infoHash: "3".repeat(40), name: "invalid", added: Number.NaN }),
+      r({ infoHash: "4".repeat(40), name: "oldest", added: 100 }),
+      r({ infoHash: "5".repeat(40), name: "middle", added: 200 }),
+    ];
+
+    expect(sortResults(dates, { field: "date", dir: "desc" }).map((x) => x.name))
+      .toEqual(["newest", "middle", "oldest", "invalid", "missing"]);
+    expect(sortResults(dates, { field: "date", dir: "asc" }).map((x) => x.name))
+      .toEqual(["oldest", "middle", "newest", "invalid", "missing"]);
   });
 
   it("sorts by quality descending then log-seeders", () => {

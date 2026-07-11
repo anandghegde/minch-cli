@@ -16,6 +16,9 @@ export async function mapPool<T, R>(
   fn: (item: T, index: number) => Promise<R>,
   onSettled?: (item: T, index: number, result: PromiseSettledResult<R>) => void,
 ): Promise<PromiseSettledResult<R>[]> {
+  if (!Number.isFinite(limit) || limit <= 0) {
+    throw new RangeError("mapPool limit must be a positive finite number");
+  }
   if (items.length === 0) return [];
 
   const results: (PromiseSettledResult<R> | undefined)[] = new Array(items.length);
@@ -30,12 +33,18 @@ export async function mapPool<T, R>(
       } catch (reason) {
         results[idx] = { status: "rejected", reason };
       }
-      onSettled?.(item, idx, results[idx]!);
+      // Progress observers must not be able to stop a worker and leave later
+      // items unprocessed.
+      try {
+        onSettled?.(item, idx, results[idx]!);
+      } catch {
+        /* observer failures are deliberately isolated */
+      }
     }
   };
 
   await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, worker),
+    Array.from({ length: Math.min(Math.max(1, Math.floor(limit)), items.length) }, worker),
   );
 
   return results as PromiseSettledResult<R>[];

@@ -71,6 +71,10 @@ export class DownloadManager {
   private readonly inputs = new Map<string, StartDownloadInput>();
   private readonly listeners = new Set<() => void>();
   private readonly queue: string[] = [];
+  // Owns a final destination and its derived .part/.part.json artifacts while
+  // an entry is queued or active. This prevents two transfers from writing the
+  // same resumable part file after a check-then-use race.
+  private readonly reservedDestinations = new Set<string>();
   private running = 0;
 
   constructor(private readonly maxConcurrent = DEFAULT_MAX_CONCURRENT) {}
@@ -184,6 +188,14 @@ export class DownloadManager {
     }
   }
 
+  private reserveDestination(dir: string, name: string): Promise<string> {
+    return resolveCollision(dir, name, (candidate) => {
+      if (this.reservedDestinations.has(candidate)) return false;
+      this.reservedDestinations.add(candidate);
+      return true;
+    });
+  }
+
   private async run(id: string, input: StartDownloadInput): Promise<void> {
     const entry = this.entries.get(id);
     const ctrl = this.controllers.get(id);
@@ -204,7 +216,10 @@ export class DownloadManager {
         input.file.id,
         ctrl.signal,
       );
-      const dest = await resolveCollision(input.dir, resolved.filename || input.file.name);
+      const dest = await this.reserveDestination(
+        input.dir,
+        resolved.filename || input.file.name,
+      );
       entry.dest = dest;
       entry.name = path.basename(dest);
       this.emit();
@@ -213,8 +228,8 @@ export class DownloadManager {
         connections: input.connections,
         signal: ctrl.signal,
         fetchImpl: input.fetchImpl,
-        reResolve: async () =>
-          (await input.provider.resolveFileUrl(input.transfer.id, input.file.id)).url,
+        reResolve: async (signal) =>
+          (await input.provider.resolveFileUrl(input.transfer.id, input.file.id, signal)).url,
         onProgress: (p) => {
           entry.progress = p;
           this.emit();
@@ -241,6 +256,7 @@ export class DownloadManager {
       }
       entry.finishedAt = Date.now();
     } finally {
+      if (entry.dest) this.reservedDestinations.delete(entry.dest);
       this.controllers.delete(id);
       this.inputs.delete(id);
       this.emit();

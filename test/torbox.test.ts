@@ -270,6 +270,18 @@ describe("torbox: error normalization", () => {
     expect((err as Error).message).toBe("slow down");
   });
 
+  it("preserves a 429 body and Retry-After instead of retrying it generically", async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({ success: false, detail: "slow down" }, 429, { "retry-after": "30" }),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+    const err = await rejection(createTorbox(cfg()).checkAuth());
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect((err as { kind: string }).kind).toBe("quota");
+    expect((err as { retryAfterMs?: number }).retryAfterMs).toBe(30_000);
+    expect((err as Error).message).toBe("slow down");
+  });
+
   it("throws an auth error when no key is configured", async () => {
     const tb = createTorbox({ ...defaultConfig });
     expect(tb.isConfigured()).toBe(false);

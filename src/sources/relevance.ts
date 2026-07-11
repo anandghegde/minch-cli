@@ -11,6 +11,7 @@ import {
   parseQuery,
   phraseMatch,
   tokenize,
+  tokenizePhrase,
   type ParsedQuery,
 } from "./query";
 
@@ -87,11 +88,16 @@ export function matchScore(
   phrases: string[][] = [],
 ): { tier: 0 | 1 | 2 | 3; score: number } {
   const nameTokens = tokenize(name);
+  // Quoted query phrases retain stop words, so compare them against the
+  // equivalent stream from the result name rather than the free-text stream.
+  const namePhraseTokens = tokenizePhrase(name);
   const hasMust = tokens.length > 0;
   const hasPhrases = phrases.length > 0;
 
   if (!hasMust && !hasPhrases) return { tier: 0, score: 0 };
-  if (nameTokens.length === 0) return { tier: 0, score: 0 };
+  if (nameTokens.length === 0 && namePhraseTokens.length === 0) {
+    return { tier: 0, score: 0 };
+  }
 
   // --- must-token matching (same as Phase A, with glue) --------------------
   const used = new Array<boolean>(nameTokens.length).fill(false);
@@ -170,7 +176,7 @@ export function matchScore(
     }
   }
 
-  const phrasesHit = phrases.filter((p) => phraseMatch(nameTokens, p)).length;
+  const phrasesHit = phrases.filter((p) => phraseMatch(namePhraseTokens, p)).length;
   const allPhrases = !hasPhrases || phrasesHit === phrases.length;
   const mustFull = !hasMust || matched === tokens.length;
   const mustPartial = hasMust && matched > 0 && matched < tokens.length;
@@ -335,6 +341,10 @@ interface RankFeatures {
   added: number;
 }
 
+function stableResultKey(result: TorrentResult): string {
+  return `${result.source}\u0000${result.name.toLocaleLowerCase()}\u0000${result.infoHash}`;
+}
+
 function isEmptyQuery(q: ParsedQuery): boolean {
   return (
     q.must.length === 0 &&
@@ -410,14 +420,18 @@ export function filterByRelevance(
 ): TorrentResult[] {
   const strictAnd = opts.strictAnd === true;
   const hideTrash = opts.hideTrash === true;
-  if (!strictAnd && !hideTrash) return list;
-
   const parsed = parseQuery(query);
+  const excluded =
+    parsed.exclude.length > 0
+      ? list.filter((r) => !nameMatchesExclude(r.name, parsed.exclude))
+      : list;
+  if (!strictAnd && !hideTrash) return excluded;
+
   const matchTokens = matchTokensFor(parsed);
   const hasText =
     matchTokens.length > 0 || parsed.phrases.length > 0;
 
-  return list.filter((r) => {
+  return excluded.filter((r) => {
     if (hideTrash && trashPenalty(r.name) > 0) return false;
     if (strictAnd) {
       // Empty/stop-only query: nothing is "strict" — keep all.
@@ -453,24 +467,25 @@ export function rankResults(
   const preferQuality = opts.preferQuality === true;
   const strictAnd = opts.strictAnd === true;
   const hideTrash = opts.hideTrash === true;
-
-  if (isEmptyQuery(parsed)) {
-    // Still honor hideTrash on empty/browse-style queries when requested.
-    const base = hideTrash
-      ? list.filter((r) => trashPenalty(r.name) === 0)
-      : list;
-    return base.slice().sort((a, b) => {
-      if (b.seeders !== a.seeders) return b.seeders - a.seeders;
-      return (b.added ?? 0) - (a.added ?? 0);
-    });
-  }
-
-  // B3: excludes are hard filters (user intent), not soft demotion.
-  let filtered =
+  // Exclusions are user intent, including for browse-style/exclude-only
+  // queries. Apply them before the empty-query legacy sort path.
+  const filtered =
     parsed.exclude.length > 0
       ? list.filter((r) => !nameMatchesExclude(r.name, parsed.exclude))
       : list;
 
+  if (isEmptyQuery(parsed)) {
+    // Still honor hideTrash on empty/browse-style queries when requested.
+    const base = hideTrash
+      ? filtered.filter((r) => trashPenalty(r.name) === 0)
+      : filtered;
+    return base.slice().sort((a, b) => {
+      if (b.seeders !== a.seeders) return b.seeders - a.seeders;
+      return (b.added ?? 0) - (a.added ?? 0) || stableResultKey(a).localeCompare(stableResultKey(b));
+    });
+  }
+
+  // B3: excludes are hard filters (user intent), not soft demotion.
   const matchTokens = matchTokensFor(parsed);
 
   const scored: RankFeatures[] = [];
@@ -512,7 +527,7 @@ export function rankResults(
     if (preferQuality && b.quality !== a.quality) return b.quality - a.quality;
     if (b.seeds !== a.seeds) return b.seeds - a.seeds;
     if (b.sizeScore !== a.sizeScore) return b.sizeScore - a.sizeScore;
-    return b.added - a.added;
+    return b.added - a.added || stableResultKey(a.r).localeCompare(stableResultKey(b.r));
   });
 
   return scored.map((s) => s.r);

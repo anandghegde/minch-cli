@@ -6,8 +6,16 @@ import type { SearchOptions, Source, TestResult, TorrentResult } from "./types";
 const HOSTS = ["yts.mx", "yts.am", "yts.rs"];
 const SRC: SourceIdentity = { id: "yts", label: "YTS" };
 
-function movieUrls(params: URLSearchParams): string[] {
-  return HOSTS.map((h) => `https://${h}/api/v2/list_movies.json?${params.toString()}`);
+function movieUrls(
+  params: URLSearchParams,
+  opts: { baseUrl?: string },
+): string[] {
+  // A health probe passes one mirror at a time. Search and browse must use the
+  // same selected mirror instead of silently falling back to the hard-coded set.
+  const bases = opts.baseUrl
+    ? [opts.baseUrl.replace(/\/$/, "")]
+    : HOSTS.map((host) => `https://${host}`);
+  return bases.map((base) => `${base}/api/v2/list_movies.json?${params.toString()}`);
 }
 
 interface YtsTorrent {
@@ -56,32 +64,36 @@ function toResults(json: YtsResponse): TorrentResult[] {
 
 async function search(
   query: string,
-  opts: SearchOptions = {},
+  opts: SearchOptions & { baseUrl?: string } = {},
 ): Promise<TorrentResult[]> {
   const q = query.trim();
   const params = new URLSearchParams({ limit: "50" });
   if (q) params.set("query_term", q);
   else params.set("sort_by", "date_added");
-  const json = await fetchFirstOk(movieUrls(params), opts, async (r) => (await r.json()) as YtsResponse);
+  const json = await fetchFirstOk(movieUrls(params, opts), opts, async (r) => (await r.json()) as YtsResponse);
   const out = toResults(json);
   return applyLimit(out, opts);
 }
 
 // Trending: YTS's most-downloaded movies (a better popularity signal than the
 // date-added list search() uses for an empty query).
-async function browse(opts: SearchOptions = {}): Promise<TorrentResult[]> {
+async function browse(
+  opts: SearchOptions & { baseUrl?: string } = {},
+): Promise<TorrentResult[]> {
   const json = await fetchFirstOk(
-    movieUrls(new URLSearchParams({ limit: "50", sort_by: "download_count" })),
+    movieUrls(new URLSearchParams({ limit: "50", sort_by: "download_count" }), opts),
     opts,
     async (r) => (await r.json()) as YtsResponse,
   );
   return applyLimit(toResults(json), opts);
 }
 
-async function test(opts: SearchOptions = {}): Promise<TestResult> {
+async function test(
+  opts: SearchOptions & { baseUrl?: string } = {},
+): Promise<TestResult> {
   return runProbe(opts, async () => {
     const json = await fetchFirstOk(
-      movieUrls(new URLSearchParams({ limit: "10", sort_by: "date_added" })),
+      movieUrls(new URLSearchParams({ limit: "10", sort_by: "date_added" }), opts),
       opts,
       async (r) => (await r.json()) as YtsResponse,
     );

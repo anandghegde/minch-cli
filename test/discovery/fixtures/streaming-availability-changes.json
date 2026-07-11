@@ -1,0 +1,158 @@
+{
+  "changes": [
+    {
+      "changeType": "new",
+      "itemType": "show",
+      "link": "https://www.netflix.com/title/fixture-2001",
+      "service": {
+        "homePage": "https://www.netflix.com/",
+        "id": "netflix",
+        "name": "Netflix",
+        "themeColorCode": "E50914"
+      },
+      "showId": "show-2001",
+      "showType": "movie",
+      "streamingOptionType": "subscription",
+      "timestamp": 1783665832
+    },
+    {
+      "changeType": "new",
+      "itemType": "show",
+      "link": "https://www.hotstar.com/in/shows/fixture-2002",
+      "service": {
+        "homePage": "https://www.hotstar.com/in",
+        "id": "hotstar",
+        "name": "JioHotstar",
+        "themeColorCode": "0B57D0"
+      },
+      "showId": "show-2002",
+      "showType": "series",
+      "streamingOptionType": "subscription",
+      "timestamp": 1783659000
+    },
+    {
+      "changeType": "new",
+      "itemType": "show",
+      "link": "https://www.zee5.com/movies/details/fixture-2003",
+      "service": {
+        "homePage": "https://www.zee5.com/",
+        "id": "zee5",
+        "name": "Zee5",
+        "themeColorCode": "6D1D8E"
+      },
+      "showId": "show-2003",
+      "showType": "movie",
+      "streamingOptionType": "subscription",
+      "timestamp": 1783655000
+    },
+    {
+      "changeType": "new",
+      "itemType": "show",
+      "link": "https://www.primevideo.com/detail/fixture-2004",
+      "service": {
+        "homePage": "https://www.primevideo.com/",
+        "id": "prime",
+        "name": "Prime Video",
+        "themeColorCode": "00A8E1"
+      },
+      "showId": "show-2004",
+      "showType": "movie",
+      "streamingOptionType": "subscription",
+      "timestamp": 1783651000
+    },
+    {
+      "changeType": "new",
+      "itemType": "show",
+      "link": "https://www.sonyliv.com/movies/fixture-2005",
+      "service": {
+        "homePage": "https://www.sonyliv.com/",
+        "id": "sonyliv",
+        "name": "SonyLiv",
+        "themeColorCode": "101010"
+      },
+      "showId": "show-2005",
+      "showType": "movie",
+      "streamingOptionType": "subscription",
+      "timestamp": 1783647000
+    }
+  ],
+  "hasMore": true,
+  "nextCursor": "1783647000:fixture-page-2",
+  "shows": {
+    "show-2001": {
+      "genres": [
+        {
+          "id": "drama",
+          "name": "Drama"
+        }
+      ],
+      "id": "show-2001",
+      "imdbId": "tt9002001",
+      "itemType": "show",
+      "originalTitle": "Monsoon Letters",
+      "releaseYear": 2026,
+      "showType": "movie",
+      "title": "Monsoon Letters",
+      "tmdbId": "movie/9002001"
+    },
+    "show-2002": {
+      "creators": ["Fixture Creator"],
+      "firstAirYear": 2025,
+      "genres": [
+        {
+          "id": "crime",
+          "name": "Crime"
+        }
+      ],
+      "id": "show-2002",
+      "imdbId": "tt9002002",
+      "itemType": "show",
+      "originalTitle": "Deccan Files",
+      "seasonCount": 1,
+      "showType": "series",
+      "title": "Deccan Files",
+      "tmdbId": "tv/9002002"
+    },
+    "show-2003": {
+      "genres": [
+        {
+          "id": "comedy",
+          "name": "Comedy"
+        }
+      ],
+      "id": "show-2003",
+      "imdbId": "tt9002003",
+      "itemType": "show",
+      "originalTitle": "Shared Horizon",
+      "releaseYear": 2026,
+      "showType": "movie",
+      "title": "Shared Horizon",
+      "tmdbId": "movie/9002003"
+    },
+    "show-2004": {
+      "genres": [
+        {
+          "id": "documentary",
+          "name": "Documentary"
+        }
+      ],
+      "id": "show-2004",
+      "imdbId": "tt9002004",
+      "itemType": "show",
+      "originalTitle": "Shared Horizon",
+      "releaseYear": 1998,
+      "showType": "movie",
+      "title": "Shared Horizon",
+      "tmdbId": "movie/9002004"
+    },
+    "show-2005": {
+      "genres": [],
+      "id": "show-2005",
+      "itemType": "show",
+      "originalTitle": "No External Identity",
+      "releaseYear": null,
+      "showType": "movie",
+      "title": "No External Identity"
+    }
+  }
+}

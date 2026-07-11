@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
-import { loadConfig, saveConfig, type Config } from "../config/config";
-import { buildRegistry, isEnabled, activeMirror, type Registry } from "../sources/registry";
-import { probeAll, probeSource } from "../sources/health";
+import {
+  loadConfig,
+  takeConfigWarnings,
+  type Config,
+} from "../config/config";
+import { activeMirror, buildRegistry, type Registry } from "../sources/registry";
+import { probeAll } from "../sources/health";
 import { nextSort, type SortState } from "../sources/search";
 import {
   emptyFilters,
@@ -10,13 +14,13 @@ import {
   cycleTime,
   cycleSize,
   cycleSeeders,
+  cycleCategory,
   cycleMatch,
   activeFilterCount as countFilters,
   type FilterState,
 } from "../sources/filters";
-import { clearCache } from "../sources/cache";
 import { writeClipboard, openExternal } from "../util/clipboard";
-import { fetchResilient, USER_AGENT } from "../util/net";
+import { disposeResponse, fetchResilient, HttpError, USER_AGENT } from "../util/net";
 import { infoHashFromMagnet } from "../sources/magnet";
 import { truncate, cleanText } from "../util/format";
 import {
@@ -40,27 +44,36 @@ import { Footer, type Hint } from "./components/Footer";
 import { SearchBar } from "./components/SearchBar";
 import { Results } from "./components/Results";
 import { Sources } from "./components/Sources";
-import { Trending } from "./components/Trending";
+import { Discover } from "./components/Discover";
 import { Tabs } from "./components/Tabs";
 import { ProviderTransfers } from "./components/ProviderTransfers";
 import { Accounts } from "./components/Accounts";
+import { Settings } from "./components/Settings";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { Spinner } from "./components/Spinner";
 import { Splash, type ProbeProgress } from "./views/Splash";
 import { useTransfers } from "./hooks/useTransfers";
-import { useDownloads } from "./hooks/useDownloads";
+import { useSourceActions } from "./hooks/useSourceActions";
+import { useConfig } from "./hooks/useConfig";
+import { DownloadProvider } from "./download-store";
+import { listRowsForTerminal } from "./layout";
 import { COLOR } from "./theme";
+import {
+  withStreamingAvailabilityApiKey,
+  withTmdbReadToken,
+} from "../discovery/config";
 
-export const TAB_ORDER: View[] = ["search", "trending", "realdebrid", "torbox", "sources"];
+export const TAB_ORDER: View[] = ["search", "trending", "realdebrid", "torbox", "sources", "settings"];
 
 /** User-facing tab labels, used for the tab bar and footer "tab" hint. */
 export const TAB_LABELS: Record<View, string> = {
   splash: "",
   search: "Torrent Search",
-  trending: "Trending",
+  trending: "Discover",
   realdebrid: "Real-Debrid",
   torbox: "TorBox",
   sources: "Sources",
+  settings: "Settings",
 };
 
 /** Turn any thrown debrid failure into a short, non-crashing notice. */
@@ -103,7 +116,6 @@ export function App({
     };
   }, [stdout]);
 
-  const [config, setConfigState] = useState<Config | null>(null);
   const [registry, setRegistry] = useState<Registry | null>(null);
   const [view, setView] = useState<View>("splash");
   const [query, setQuery] = useState(initialQuery ?? "");
@@ -114,18 +126,11 @@ export function App({
   const [showHelp, setShowHelp] = useState(false);
   const [editing, setEditing] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
+  const [settingsEditing, setSettingsEditing] = useState(false);
   const [debridAuth, setDebridAuth] = useState<Record<string, DebridAuthState>>({});
   const [progress, setProgress] = useState<ProbeProgress>({ total: 0, done: 0, ok: 0 });
   const booting = useRef(false);
-
-  const configRef = useRef<Config | null>(null);
-  configRef.current = config;
-
-  const persist = useCallback((c: Config) => {
-    setConfigState(c);
-    configRef.current = c;
-    void saveConfig(c);
-  }, []);
+  const { config, configRef, hydrateConfig, commitConfig, updateConfig } = useConfig(setNotice);
 
   // Boot: load config, build registry, run first-run probe if needed.
   useEffect(() => {
@@ -134,14 +139,18 @@ export function App({
     let alive = true;
     void (async () => {
       const cfg = await loadConfig();
+      const configWarnings = takeConfigWarnings();
+      const configWarning = configWarnings.length > 0
+        ? `${configWarnings[0]}${configWarnings.length > 1 ? ` (+${configWarnings.length - 1} more)` : ""}`
+        : null;
       const reg = await buildRegistry(cfg);
       if (!alive) return;
       setRegistry(reg);
 
       if (cfg.firstRunDone) {
-        setConfigState(cfg);
-        configRef.current = cfg;
+        hydrateConfig(cfg);
         setFilters(filtersFromConfig(cfg.relevance));
+        if (configWarning) setNotice(configWarning);
         setView("search");
         if (initialQuery?.trim()) setSubmittedQuery(initialQuery.trim());
         return;
@@ -171,19 +180,20 @@ export function App({
       );
       if (!alive) return;
       const next: Config = { ...cfg, sources: { ...cfg.sources, ...working }, firstRunDone: true };
-      persist(next);
+      commitConfig(next);
       setFilters(filtersFromConfig(next.relevance));
       // Brief pause so the user sees the "Ready" state, then enter.
       setTimeout(() => {
         if (!alive) return;
         setView("search");
+        if (configWarning) setNotice(configWarning);
         if (initialQuery?.trim()) setSubmittedQuery(initialQuery.trim());
       }, 700);
     })();
     return () => {
       alive = false;
     };
-  }, [initialQuery, persist]);
+  }, [initialQuery, commitConfig, hydrateConfig]);
 
   const quitAll = useCallback(() => {
     if (onQuit) onQuit();
@@ -208,6 +218,7 @@ export function App({
   const cycleTimeFilter = useCallback(() => setFilters((f) => cycleTime(f)), []);
   const cycleSizeFilter = useCallback(() => setFilters((f) => cycleSize(f)), []);
   const cycleSeederFilter = useCallback(() => setFilters((f) => cycleSeeders(f)), []);
+  const cycleCategoryFilter = useCallback(() => setFilters((f) => cycleCategory(f)), []);
   const cycleMatchFilter = useCallback(() => setFilters((f) => cycleMatch(f)), []);
   // Reset returns to config-seeded defaults (not a hard empty), so
   // relevance.strictAnd / hideTrash in config.json stay effective after `r`.
@@ -215,6 +226,19 @@ export function App({
     setFilters(filtersFromConfig(configRef.current?.relevance));
   }, []);
   const activeFilterCount = useMemo(() => countFilters(filters), [filters]);
+
+  // Settings can change the persistent relevance defaults while the app is
+  // running. Keep the current search view aligned with those two defaults.
+  useEffect(() => {
+    if (!config) return;
+    const match = config.relevance?.strictAnd === true ? 1 : 0;
+    const hideTrash = config.relevance?.hideTrash === true;
+    setFilters((current) =>
+      current.match === match && current.hideTrash === hideTrash
+        ? current
+        : { ...current, match, hideTrash },
+    );
+  }, [config?.relevance?.strictAnd, config?.relevance?.hideTrash]);
 
   // Debrid providers, rebuilt whenever config changes (key edits, env). The
   // polling hook only restarts when the configured id set changes.
@@ -288,6 +312,10 @@ export function App({
             const resp = await fetchResilient(result.downloadUrl, {
               headers: { "User-Agent": USER_AGENT },
             });
+            if (!resp.ok) {
+              await disposeResponse(resp);
+              throw new HttpError(resp.status, `torrent download returned ${resp.status}`);
+            }
             const data = new Uint8Array(await resp.arrayBuffer());
             res = await provider.addTorrentFile(data, result.name, {
               name: result.name,
@@ -337,7 +365,6 @@ export function App({
   const managerRef = useRef<DownloadManager | null>(null);
   if (!managerRef.current) managerRef.current = new DownloadManager();
   const manager = managerRef.current;
-  const downloads = useDownloads(manager);
 
   const downloadLocally = useCallback(
     (transfer: Transfer, file?: TransferFile) => {
@@ -418,14 +445,26 @@ export function App({
     (id: DebridId, key: string | undefined) => {
       const cfg = configRef.current;
       if (!cfg) return;
-      persist(withDebridKey(cfg, id, key));
+      updateConfig((current) => withDebridKey(current, id, key));
       // Reset any stale auth result so the user re-verifies the new key.
       setDebridAuth((s) => ({ ...s, [id]: { checking: false } }));
       setNotice(key ? `Saved ${PROVIDER_LABELS[id]} key.` : `Cleared ${PROVIDER_LABELS[id]} key.`);
       refreshTransfers();
     },
-    [persist, refreshTransfers],
+    [updateConfig, refreshTransfers],
   );
+
+  const saveTmdbToken = useCallback((token: string | undefined) => {
+    updateConfig((current) => withTmdbReadToken(current, token));
+    setNotice(token ? "Saved TMDB read token." : "Cleared TMDB read token.");
+  }, [updateConfig]);
+
+  const saveStreamingAvailabilityKey = useCallback((key: string | undefined) => {
+    updateConfig((current) => withStreamingAvailabilityApiKey(current, key));
+    setNotice(key
+      ? "Saved Streaming Availability API key."
+      : "Cleared Streaming Availability API key.");
+  }, [updateConfig]);
 
   const copyMagnet = useCallback(
     (input: { name: string; magnet: string }) => {
@@ -460,95 +499,12 @@ export function App({
     })();
   }, []);
 
-  const retestSource = useCallback(
-    (id: string, mirror?: string) => {
-      const reg = registry;
-      const cfg = configRef.current;
-      if (!reg || !cfg) return;
-      const source = reg.byId.get(id);
-      if (!source) return;
-      clearCache();
-      setNotice(`Testing ${source.label}…`);
-      void (async () => {
-        // Explicit mirror: test only that one. Otherwise let probeSource try
-        // the configured mirror first, then fall back through the others.
-        const base = mirror ?? activeMirror(source, cfg);
-        const outcome = await probeSource(
-          mirror ? { ...source, links: [mirror] } : source,
-          base,
-        );
-        const latest = configRef.current ?? cfg;
-        persist({
-          ...latest,
-          sources: {
-            ...latest.sources,
-            [id]: {
-              enabled: outcome.health.ok,
-              mirror: mirror ?? outcome.mirror ?? latest.sources[id]?.mirror,
-              health: outcome.health,
-            },
-          },
-        });
-        setNotice(
-          `${source.label}: ${outcome.health.ok ? "working" : outcome.health.code ?? "failed"}`,
-        );
-      })();
-    },
-    [registry, persist],
-  );
-
-  const retestAll = useCallback(() => {
-    const reg = registry;
-    const cfg = configRef.current;
-    if (!reg || !cfg) return;
-    clearCache();
-    setNotice("Retesting all sources…");
-    void (async () => {
-      const targets = reg.sources.filter((s) => !s.requiresConfig);
-      const updates: Config["sources"] = { ...cfg.sources };
-      await probeAll(
-        targets,
-        (s) => activeMirror(s, cfg),
-        (o) => {
-          updates[o.id] = {
-            enabled: o.health.ok,
-            mirror: o.mirror ?? cfg.sources[o.id]?.mirror,
-            health: o.health,
-          };
-        },
-      );
-      persist({ ...(configRef.current ?? cfg), sources: updates });
-      setNotice("Retest complete.");
-    })();
-  }, [registry, persist]);
-
-  const toggleSource = useCallback(
-    (id: string) => {
-      const reg = registry;
-      const cfg = configRef.current;
-      if (!reg || !cfg) return;
-      const source = reg.byId.get(id);
-      if (!source) return;
-      const current = isEnabled(source, cfg);
-      persist({
-        ...cfg,
-        sources: { ...cfg.sources, [id]: { ...cfg.sources[id], enabled: !current } },
-      });
-    },
-    [registry, persist],
-  );
-
-  const setMirror = useCallback(
-    (id: string, mirror: string) => {
-      const cfg = configRef.current;
-      if (!cfg) return;
-      persist({
-        ...cfg,
-        sources: { ...cfg.sources, [id]: { ...cfg.sources[id], enabled: cfg.sources[id]?.enabled ?? true, mirror } },
-      });
-    },
-    [persist],
-  );
+  const { retestSource, retestAll, toggleSource, setMirror } = useSourceActions({
+    registry,
+    configRef,
+    updateConfig,
+    setNotice,
+  });
 
   useEffect(() => {
     if (!notice) return;
@@ -558,15 +514,14 @@ export function App({
 
   const rows = size.rows;
   const cols = size.cols;
-  const chrome = 8; // logo + search bar + tab bar + footer + margins
-  const listRows = Math.max(4, rows - chrome - 2);
+  const listRows = listRowsForTerminal(rows, cols);
 
   const store = useMemo<Store | null>(() => {
     if (!config || !registry) return null;
     return {
       config,
       registry,
-      setConfig: persist,
+      updateConfig,
       view,
       setView,
       query,
@@ -580,6 +535,7 @@ export function App({
       cycleTimeFilter,
       cycleSizeFilter,
       cycleSeederFilter,
+      cycleCategoryFilter,
       cycleMatchFilter,
       resetFilters,
       activeFilterCount,
@@ -602,7 +558,6 @@ export function App({
       removeTransfer,
       transfersFor,
       providerConfigured,
-      downloads,
       downloadLocally,
       cancelDownload,
       openDownload,
@@ -613,23 +568,26 @@ export function App({
       debridAuth,
       checkDebridAuth,
       saveDebridKey,
+      saveTmdbToken,
+      saveStreamingAvailabilityKey,
       quitAll,
       cols,
       rows,
       listRows,
     };
   }, [
-    config, registry, persist, view, query, submittedQuery, submitQuery, focusSearch, sort,
+    config, registry, updateConfig, view, query, submittedQuery, submitQuery, focusSearch, sort,
     cycleSort, notice, copyMagnet, openMagnet, retestSource, retestAll,
     toggleSource, setMirror, quitAll, cols, rows, listRows,
-    filters, cycleTimeFilter, cycleSizeFilter, cycleSeederFilter, cycleMatchFilter,
+    filters, cycleTimeFilter, cycleSizeFilter, cycleSeederFilter, cycleCategoryFilter,
+    cycleMatchFilter,
     resetFilters, activeFilterCount,
     debridProviders, anyDebridConfigured, transfers, transfersLoading,
     transfersError, transfersUpdatedAt, sendToDebrid, refreshTransfers,
     removeTransfer, transfersFor, providerConfigured,
     accountsOpen, openAccounts, closeAccounts, debridAuth,
-    checkDebridAuth, saveDebridKey,
-    downloads, downloadLocally, cancelDownload, openDownload, dismissDownload,
+    checkDebridAuth, saveDebridKey, saveTmdbToken, saveStreamingAvailabilityKey,
+    downloadLocally, cancelDownload, openDownload, dismissDownload,
   ]);
 
   // Global input (only when not editing the search field and a store exists).
@@ -640,7 +598,7 @@ export function App({
         return;
       }
       // The Accounts overlay captures every other key (including typed text).
-      if (accountsOpen) return;
+      if (accountsOpen || settingsEditing) return;
       if (showHelp) {
         setShowHelp(false);
         return;
@@ -714,10 +672,15 @@ export function App({
       : view === "trending"
         ? [
             { keys: "\u2191\u2193", label: "Move" },
-            { keys: "\u2190\u2192", label: "Category" },
-            { keys: "y", label: "Copy" },
-            { keys: "b", label: "Debrid" },
-            { keys: "o", label: "Open" },
+            { keys: "\u2190\u2192", label: "Feed" },
+            { keys: "m", label: "Type" },
+            { keys: "p", label: "Provider" },
+            { keys: "l", label: "Language" },
+            { keys: "i", label: "Indian titles" },
+            { keys: "t", label: "Window" },
+            { keys: "enter", label: "Details" },
+            { keys: "s", label: "Search torrents" },
+            { keys: "r", label: "Refresh" },
             tabHint,
             { keys: "?", label: "Keys" },
           ]
@@ -734,6 +697,7 @@ export function App({
         : editing && view === "search"
           ? [
               { keys: "enter", label: "Search" },
+              { keys: "\u2190\u2192", label: "Caret" },
               { keys: "esc", label: "Cancel" },
               { keys: "?", label: "Keys" },
             ]
@@ -743,13 +707,20 @@ export function App({
               { keys: "y", label: "Copy" },
               { keys: "b", label: "Debrid" },
               { keys: "s", label: "Sort" },
-              { keys: "t/z/x/f", label: "Filter" },
+              { keys: "t/z/x/c/f", label: "Filter" },
               tabHint,
               { keys: "?", label: "Keys" },
             ];
 
   return (
     <StoreContext.Provider value={store}>
+      <DownloadProvider
+        manager={manager}
+        downloadLocally={downloadLocally}
+        cancelDownload={cancelDownload}
+        openDownload={openDownload}
+        dismissDownload={dismissDownload}
+      >
       <Box flexDirection="column" paddingX={1} height={rows}>
         <Box justifyContent="space-between">
           <Logo />
@@ -782,14 +753,18 @@ export function App({
             </Box>
 
             <Box marginTop={1} flexGrow={1}>
-              {view === "sources" ? (
+              <Discover
+                active={view === "trending" && !editing}
+                visible={view === "trending"}
+              />
+              {view === "trending" ? null : view === "sources" ? (
                 <Sources active={!editing} />
-              ) : view === "trending" ? (
-                <Trending active={!editing} />
               ) : view === "realdebrid" ? (
                 <ProviderTransfers provider="realdebrid" active={!editing} />
               ) : view === "torbox" ? (
                 <ProviderTransfers provider="torbox" active={!editing} />
+              ) : view === "settings" ? (
+                <Settings active={!editing} onEditingChange={setSettingsEditing} />
               ) : (
                 <Results active={!editing} />
               )}
@@ -799,6 +774,7 @@ export function App({
           </>
         )}
       </Box>
+      </DownloadProvider>
     </StoreContext.Provider>
   );
 }

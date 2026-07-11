@@ -11,6 +11,7 @@ import {
 } from "../../sources/relevance";
 import {
   applyFilters,
+  countUndatedResults,
   filterSummary,
   MATCH_PRESETS,
 } from "../../sources/filters";
@@ -45,7 +46,7 @@ export function Results({ active }: { active: boolean }) {
     [config.relevance?.preferQuality, filters.match, filters.hideTrash],
   );
 
-  // Filter first (time/size/seeders), then relevance filters + rank/sort.
+  // Apply hard filters first, then relevance filters + rank/sort.
   const filtered = useMemo(
     () => applyFilters(search.results, filters),
     [search.results, filters],
@@ -60,6 +61,8 @@ export function Results({ active }: { active: boolean }) {
   }, [filtered, sort, submittedQuery, rankOpts]);
   const totalCount = search.results.length;
   const filterActive = store.activeFilterCount > 0;
+  const undatedHidden = filters.time > 0 ? countUndatedResults(search.results) : 0;
+  const showUndatedHidden = undatedHidden > 0 && cols >= 90;
 
   const [cursor, setCursor] = useState(0);
   useEffect(() => setCursor(0), [submittedQuery]);
@@ -109,6 +112,7 @@ export function Results({ active }: { active: boolean }) {
       if (input === "t") return void store.cycleTimeFilter();
       if (input === "z") return void store.cycleSizeFilter();
       if (input === "x") return void store.cycleSeederFilter();
+      if (input === "c") return void store.cycleCategoryFilter();
       if (input === "f") return void store.cycleMatchFilter();
       if (input === "r") return void store.resetFilters();
       if (results.length === 0) {
@@ -159,6 +163,7 @@ export function Results({ active }: { active: boolean }) {
               {filterActive ? (
                 <>
                   {results.length} of {totalCount} result{totalCount === 1 ? "" : "s"}
+                  {showUndatedHidden ? ` · ${undatedHidden} undated hidden` : ""}
                 </>
               ) : (
                 <>

@@ -6,6 +6,11 @@ describe("mapPool", () => {
     expect(await mapPool([], 4, async () => 1)).toEqual([]);
   });
 
+  it("rejects a non-positive or non-finite concurrency limit", async () => {
+    await expect(mapPool([1], 0, async () => 1)).rejects.toThrow(RangeError);
+    await expect(mapPool([1], Number.NaN, async () => 1)).rejects.toThrow(RangeError);
+  });
+
   it("preserves insertion order and maps every item exactly once", async () => {
     const items = [1, 2, 3, 4, 5];
     const settled = await mapPool(items, 2, async (n) => n * 10);
@@ -90,6 +95,17 @@ describe("mapPool", () => {
       { item: 1, status: "fulfilled", reason: undefined },
       { item: 2, status: "rejected", reason: "boom" },
       { item: 3, status: "fulfilled", reason: undefined },
+    ]);
+  });
+
+  it("continues all work when an onSettled observer throws", async () => {
+    const settled = await mapPool([1, 2, 3], 1, async (item) => item, () => {
+      throw new Error("observer failure");
+    });
+    expect(settled.map((result) => result.status)).toEqual([
+      "fulfilled",
+      "fulfilled",
+      "fulfilled",
     ]);
   });
 });

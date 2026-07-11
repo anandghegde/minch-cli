@@ -11,9 +11,8 @@ import type {
   Transfer,
   TransferFile,
 } from "../debrid/types";
-import type { DownloadEntry } from "../download/manager";
 
-export type View = "splash" | "search" | "trending" | "sources" | "realdebrid" | "torbox";
+export type View = "splash" | "search" | "trending" | "sources" | "realdebrid" | "torbox" | "settings";
 
 /** Per-provider result of the most recent `checkAuth`, shown in Accounts. */
 export interface DebridAuthState {
@@ -26,7 +25,8 @@ export interface DebridAuthState {
 export interface Store {
   config: Config;
   registry: Registry;
-  setConfig: (c: Config) => void;
+  /** Apply an intent-level update against the latest config snapshot. */
+  updateConfig: (updater: (current: Config) => Config) => void;
 
   view: View;
   setView: (v: View) => void;
@@ -45,6 +45,7 @@ export interface Store {
   cycleTimeFilter: () => void;
   cycleSizeFilter: () => void;
   cycleSeederFilter: () => void;
+  cycleCategoryFilter: () => void;
   /** Cycle text-match mode: soft ↔ strict (hide tier &lt; 2). */
   cycleMatchFilter: () => void;
   resetFilters: () => void;
@@ -83,18 +84,6 @@ export interface Store {
   /** True when the given provider has a usable key right now. */
   providerConfigured: (provider: DebridId) => boolean;
 
-  // Local downloads (accelerator) -------------------------------------------
-  /** Active + recent local downloads, newest-first, for inline progress bars. */
-  downloads: DownloadEntry[];
-  /** Pull a finished transfer's file to disk via the accelerator. */
-  downloadLocally: (transfer: Transfer, file?: TransferFile) => void;
-  /** Abort an in-flight local download (keeps the resumable .part). */
-  cancelDownload: (id: string) => void;
-  /** Open/reveal a completed download via the OS handler. */
-  openDownload: (entry: DownloadEntry) => void;
-  /** Drop a finished download from the list. */
-  dismissDownload: (id: string) => void;
-
   // Accounts ------------------------------------------------------------------
   accountsOpen: boolean;
   openAccounts: () => void;
@@ -102,6 +91,8 @@ export interface Store {
   debridAuth: Record<string, DebridAuthState>;
   checkDebridAuth: (id: DebridId) => void;
   saveDebridKey: (id: DebridId, key: string | undefined) => void;
+  saveTmdbToken: (token: string | undefined) => void;
+  saveStreamingAvailabilityKey: (key: string | undefined) => void;
 
   quitAll: () => void;
 

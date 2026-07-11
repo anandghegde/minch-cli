@@ -1,0 +1,36 @@
+{
+  "countryCode": "in",
+  "name": "India",
+  "services": [
+    {
+      "homePage": "https://www.netflix.com/",
+      "id": "netflix",
+      "name": "Netflix",
+      "themeColorCode": "E50914"
+    },
+    {
+      "homePage": "https://www.primevideo.com/",
+      "id": "prime",
+      "name": "Prime Video",
+      "themeColorCode": "00A8E1"
+    },
+    {
+      "homePage": "https://www.hotstar.com/in",
+      "id": "hotstar",
+      "name": "JioHotstar",
+      "themeColorCode": "0B57D0"
+    },
+    {
+      "homePage": "https://www.zee5.com/",
+      "id": "zee5",
+      "name": "Zee5",
+      "themeColorCode": "6D1D8E"
+    },
+    {
+      "homePage": "https://www.sonyliv.com/",
+      "id": "sonyliv",
+      "name": "SonyLiv",
+      "themeColorCode": "101010"
+    }
+  ]
+}

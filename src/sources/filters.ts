@@ -1,5 +1,6 @@
 import type { TorrentResult } from "./types";
 import type { RelevanceConfig } from "../config/config";
+import { classifyCategory, type CategoryFilter } from "./categories";
 
 /**
  * Client-side result filtering. These filters run in the UI layer over the
@@ -77,6 +78,22 @@ export const MATCH_PRESETS: MatchPreset[] = [
   { label: "strict", strict: true },
 ];
 
+export interface CategoryPreset {
+  value: CategoryFilter;
+  label: string;
+}
+
+export const CATEGORY_PRESETS: CategoryPreset[] = [
+  { value: "all", label: "All" },
+  { value: "movies", label: "Movies" },
+  { value: "tv", label: "TV" },
+  { value: "anime", label: "Anime" },
+  { value: "games", label: "Games" },
+  { value: "music", label: "Music" },
+  { value: "xxx", label: "XXX" },
+  { value: "other", label: "Other" },
+];
+
 export interface FilterState {
   /** Index into TIME_PRESETS. */
   time: number;
@@ -84,6 +101,8 @@ export interface FilterState {
   size: number;
   /** Index into SEEDER_PRESETS. */
   seeders: number;
+  /** Normalized coarse torrent category, or `all`. */
+  category: CategoryFilter;
   /** Index into MATCH_PRESETS (soft / strict AND). */
   match: number;
   /**
@@ -97,6 +116,7 @@ export const emptyFilters: FilterState = {
   time: 0,
   size: 0,
   seeders: 0,
+  category: "all",
   match: 0,
   hideTrash: false,
 };
@@ -119,6 +139,7 @@ export function isEmptyFilters(f: FilterState): boolean {
     f.time === 0 &&
     f.size === 0 &&
     f.seeders === 0 &&
+    f.category === "all" &&
     f.match === 0 &&
     !f.hideTrash
   );
@@ -130,6 +151,7 @@ export function activeFilterCount(f: FilterState): number {
     (f.time > 0 ? 1 : 0) +
     (f.size > 0 ? 1 : 0) +
     (f.seeders > 0 ? 1 : 0) +
+    (f.category !== "all" ? 1 : 0) +
     (f.match > 0 ? 1 : 0) +
     (f.hideTrash ? 1 : 0)
   );
@@ -145,6 +167,13 @@ export function cycleSize(f: FilterState): FilterState {
 export function cycleSeeders(f: FilterState): FilterState {
   return { ...f, seeders: (f.seeders + 1) % SEEDER_PRESETS.length };
 }
+export function cycleCategory(f: FilterState): FilterState {
+  const current = CATEGORY_PRESETS.findIndex((preset) => preset.value === f.category);
+  return {
+    ...f,
+    category: CATEGORY_PRESETS[(current + 1) % CATEGORY_PRESETS.length]!.value,
+  };
+}
 /** Cycle match mode: soft ↔ strict (Jackett andmatch-style). */
 export function cycleMatch(f: FilterState): FilterState {
   return { ...f, match: (f.match + 1) % MATCH_PRESETS.length };
@@ -156,15 +185,28 @@ export function filterSummary(f: FilterState): string {
   if (f.time > 0) parts.push(TIME_PRESETS[f.time]!.label);
   if (f.size > 0) parts.push(SIZE_PRESETS[f.size]!.label);
   if (f.seeders > 0) parts.push(SEEDER_PRESETS[f.seeders]!.label);
+  if (f.category !== "all") {
+    const label = CATEGORY_PRESETS.find((preset) => preset.value === f.category)!.label;
+    parts.push(`category:${label}`);
+  }
   if (f.match > 0) parts.push(`match:${MATCH_PRESETS[f.match]!.label}`);
   if (f.hideTrash) parts.push("no-trash");
   return parts.join(" \u00b7 ");
 }
 
+export function hasKnownAdded(result: TorrentResult): boolean {
+  return Number.isFinite(result.added);
+}
+
+export function countUndatedResults(results: TorrentResult[]): number {
+  return results.reduce((count, result) => count + (hasKnownAdded(result) ? 0 : 1), 0);
+}
+
 /**
- * Apply time/size/seeder filters. Pure: never mutates the input and returns the
- * same array instance when no dimension of those three is active.
- * Results with no `added` are kept even when a time window is active.
+ * Apply time/size/seeder/category filters. Pure: never mutates the input and
+ * returns the same array instance when none of those dimensions is active.
+ * An active time window requires a finite `added` timestamp at or after its
+ * cutoff. Undated or invalid rows remain available only in the all-time view.
  *
  * Match-mode / hideTrash are **not** applied here — they need the query and live
  * in `rankResults` / `filterByRelevance` so tier scoring stays in one place.
@@ -176,9 +218,12 @@ export function applyFilters(
   filters: FilterState,
   now: number = Math.floor(Date.now() / 1000),
 ): TorrentResult[] {
-  const timeSizeSeedersIdle =
-    filters.time === 0 && filters.size === 0 && filters.seeders === 0;
-  if (timeSizeSeedersIdle) return results;
+  const directFiltersIdle =
+    filters.time === 0 &&
+    filters.size === 0 &&
+    filters.seeders === 0 &&
+    filters.category === "all";
+  if (directFiltersIdle) return results;
 
   const time = TIME_PRESETS[filters.time]!;
   const size = SIZE_PRESETS[filters.size]!;
@@ -186,8 +231,8 @@ export function applyFilters(
   const cutoff = time.seconds === null ? null : now - time.seconds;
 
   return results.filter((r) => {
-    // Time window. Undated rows are kept.
-    if (cutoff !== null && r.added !== undefined && r.added < cutoff) return false;
+    // Time window. A missing/invalid date cannot prove membership.
+    if (cutoff !== null && (!hasKnownAdded(r) || r.added! < cutoff)) return false;
 
     // Size bounds (inclusive).
     if (size.min !== null && r.sizeBytes < size.min) return false;
@@ -195,6 +240,10 @@ export function applyFilters(
 
     // Seeders threshold (inclusive).
     if (seeders.min > 0 && r.seeders < seeders.min) return false;
+
+    if (filters.category !== "all" && classifyCategory(r.category) !== filters.category) {
+      return false;
+    }
 
     return true;
   });

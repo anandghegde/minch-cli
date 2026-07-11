@@ -1,6 +1,6 @@
 {
   "name": "minch-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A slick terminal torrent finder for public sources, powered by a scoped Cardigann interpreter and Prowlarr's public indexer definitions.",
   "type": "module",
   "bin": {
@@ -8,7 +8,8 @@
   },
   "files": [
     "dist",
-    "definitions"
+    "definitions",
+    "docs"
   ],
   "engines": {
     "node": ">=20"
@@ -20,6 +21,13 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "spike:discovery": "tsx scripts/discovery-contract-spike.ts",
+    "validate:discovery-india": "tsx scripts/discovery-india-validation.ts",
+    "beta:discovery": "tsx scripts/discovery-beta.ts",
+    "review:discovery": "tsx scripts/discovery-relevance-review.ts",
+    "review:discovery-handoff": "tsx scripts/discovery-search-handoff-review.ts",
+    "acceptance:discovery": "tsx scripts/discovery-acceptance.ts",
+    "refresh:discovery-physical": "tsx scripts/discovery-physical-refresh.ts",
     "sync:definitions": "tsx scripts/sync-definitions.ts",
     "prepublishOnly": "npm run build"
   },

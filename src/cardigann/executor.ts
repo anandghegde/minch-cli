@@ -20,8 +20,9 @@ import type {
 } from "./model";
 import { parseSize } from "../util/format";
 import { buildMagnet, infoHashFromMagnet, normalizeInfoHash } from "../sources/magnet";
-import { fetchResilient, HttpError, USER_AGENT } from "../util/net";
+import { disposeResponse, fetchResilient, HttpError, USER_AGENT } from "../util/net";
 import { mapPool } from "../util/concurrency";
+import type { RequestGovernor } from "./rate-limit";
 
 export interface ExecutorResult {
   infoHash: string | null;
@@ -39,12 +40,23 @@ export interface ExecutorResult {
 export interface ExecuteOptions {
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  /** Shared per-source governor for every underlying HTTP request. */
+  requestGovernor?: RequestGovernor;
 }
 
 const OPTIONAL_FIELDS = new Set([
   "imdb", "imdbid", "tmdbid", "rageid", "tvdbid", "tvmazeid", "traktid",
   "doubanid", "poster", "banner", "description", "genre",
 ]);
+
+async function governedFetch(
+  opts: ExecuteOptions,
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
+  await opts.requestGovernor?.wait(init?.signal as AbortSignal | undefined);
+  return (opts.fetchImpl ?? fetch)(url, init);
+}
 
 /** Build the base template variables (config defaults + .True/.False/Today). */
 function baseVariables(def: CardigannDefinition, siteLink: string): TemplateVars {
@@ -531,7 +543,19 @@ export function parseResults(
   const rows = engine.parseRows(def.search, text, vars);
   const out: ExecutorResult[] = [];
   for (const row of rows) {
-    const result = processRow(engine, row, def.search.fields, vars, catMap, siteLink, searchUrl, def);
+    // `.Result.*` values are row-local template state. Sharing `vars` here
+    // lets an optional field missing in this row resolve from a previous row.
+    const rowVars = { ...vars };
+    const result = processRow(
+      engine,
+      row,
+      def.search.fields,
+      rowVars,
+      catMap,
+      siteLink,
+      searchUrl,
+      def,
+    );
     if (result) out.push(result);
   }
   return out;
@@ -588,18 +612,31 @@ async function fetchSearchPage(
   headers: Record<string, string>,
   opts: ExecuteOptions,
 ): Promise<string> {
+  const body =
+    req.method === "post" && req.form
+      ? new URLSearchParams(req.form).toString()
+      : undefined;
+  const requestHeaders = { ...headers };
+  if (
+    body !== undefined &&
+    !Object.keys(requestHeaders).some((key) => key.toLowerCase() === "content-type")
+  ) {
+    requestHeaders["Content-Type"] =
+      "application/x-www-form-urlencoded;charset=UTF-8";
+  }
+
   const res = await fetchResilient(req.url, {
     method: req.method.toUpperCase(),
-    headers,
-    body:
-      req.method === "post" && req.form
-        ? new URLSearchParams(req.form).toString()
-        : undefined,
+    headers: requestHeaders,
+    body,
     signal: opts.signal,
-    fetchImpl: opts.fetchImpl as never,
+    fetchImpl: (url, init) => governedFetch(opts, url, init),
     retries: 1,
   });
-  if (!res.ok) throw new HttpError(res.status, `request returned ${res.status}`);
+  if (!res.ok) {
+    await disposeResponse(res);
+    throw new HttpError(res.status, `request returned ${res.status}`);
+  }
   return res.text();
 }
 
@@ -632,10 +669,13 @@ async function resolveDownloadInfohashes(
       const html = await fetchResilient(r.detailsUrl!, {
         headers: { "User-Agent": USER_AGENT },
         signal: opts.signal,
-        fetchImpl: opts.fetchImpl as never,
+        fetchImpl: (url, init) => governedFetch(opts, url, init),
         retries: 0,
       });
-      if (!html.ok) return;
+      if (!html.ok) {
+        await disposeResponse(html);
+        return;
+      }
       const $ = cheerio.load(await html.text());
       const root = $.root() as unknown as cheerio.Cheerio<never>;
       const hashSel: CardigannSelector = {

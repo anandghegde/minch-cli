@@ -5,3 +5,15 @@ dist
 *.db
 *.db-shm
 *.db-wal
+
+# Local environment files may contain API credentials. Commit only the
+# names-only template; minch-cli reads process.env and does not load these files.
+.env
+.env.*
+!.env.example
+.minch-beta/
+
+# Discovery credential names (never put values in this file or the template):
+# TMDB_READ_TOKEN
+# TRAKT_CLIENT_ID
+# STREAMING_AVAILABILITY_API_KEY

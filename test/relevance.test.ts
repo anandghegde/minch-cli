@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   tokenize,
+  parseQuery,
   matchScore,
   logSeeders,
   rankResults,
@@ -378,6 +379,15 @@ describe("rankResults", () => {
     expect(withPhrase.score).toBeGreaterThan(mustOnly.score);
   });
 
+  it.each([
+    ['"the matrix"', "The.Matrix.1999.1080p", 3],
+    ['"the matrix"', "Matrix.The.1999.1080p", 0],
+    ['"lord of the rings"', "Lord.Of.The.Rings.2001.1080p", 3],
+  ])("matches phrase query %s with stop words", (query, name, expectedTier) => {
+    const parsed = parseQuery(query);
+    expect(matchScore(name, parsed.must, parsed.phrases).tier).toBe(expectedTier);
+  });
+
   it('filters out excluded tokens: "spider man" -cam drops CAM rows', () => {
     const list = [
       r({
@@ -401,6 +411,19 @@ describe("rankResults", () => {
     expect(out[0]!.name).toMatch(/BluRay/);
     // Exclude removes rows; unrelated without phrase may remain or sink.
     expect(out.find((x) => /CAM/i.test(x.name))).toBeUndefined();
+  });
+
+  it.each([
+    ["-cam", {}],
+    ["-cam", { strictAnd: true }],
+    ['"the matrix" -cam', { strictAnd: true }],
+  ] as const)("honors exclusions for %s with options %o", (query, opts) => {
+    const list = [
+      r({ infoHash: "1".repeat(40), name: "The.Matrix.1999.CAM", seeders: 1000 }),
+      r({ infoHash: "2".repeat(40), name: "The.Matrix.1999.BluRay", seeders: 10 }),
+    ];
+    const out = rankResults(list, query, opts);
+    expect(out.map((x) => x.name)).toEqual(["The.Matrix.1999.BluRay"]);
   });
 
   it("does not crash on unclosed quotes", () => {
@@ -608,5 +631,14 @@ describe("rankResults", () => {
     expect(out[0]!.name).toMatch(/BluRay/);
     // Preserves input order among survivors (no re-sort).
     expect(out[0]).toBe(list[2]);
+  });
+
+  it("filterByRelevance retains exclusions with a manual sort and no other filter", () => {
+    const list = [
+      r({ infoHash: "1".repeat(40), name: "Movie.CAM", seeders: 1000 }),
+      r({ infoHash: "2".repeat(40), name: "Movie.BluRay", seeders: 10 }),
+    ];
+    const out = filterByRelevance(list, "-cam");
+    expect(out).toEqual([list[1]]);
   });
 });

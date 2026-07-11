@@ -52,11 +52,11 @@ export function formatRelative(unixSeconds?: number): string {
 }
 
 function isJunkCodePoint(cp: number): boolean {
-  if (cp < 0x20 || cp === 0x7f) return true;
+  if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) return true;
   if (cp === 0xfffd) return true;
   if (cp >= 0x200b && cp <= 0x200f) return true;
   if (cp >= 0x2028 && cp <= 0x202e) return true;
-  if (cp === 0x2060 || cp === 0xfeff) return true;
+  if (cp === 0x2060 || (cp >= 0x2066 && cp <= 0x2069) || cp === 0xfeff) return true;
   return false;
 }
 
@@ -66,7 +66,7 @@ export function cleanText(s: string): string {
   for (const ch of s.normalize("NFC")) {
     if (!isJunkCodePoint(ch.codePointAt(0)!)) out += ch;
   }
-  return out.replace(/\s+/g, " ").trim() || "Untitled";
+  return out.replace(/\s+/g, " ").trim();
 }
 
 export function truncate(s: string, max: number): string {

@@ -5,17 +5,21 @@ import {
   filtersFromConfig,
   isEmptyFilters,
   activeFilterCount,
+  countUndatedResults,
   filterSummary,
   cycleTime,
   cycleSize,
   cycleSeeders,
+  cycleCategory,
   cycleMatch,
   TIME_PRESETS,
   SIZE_PRESETS,
   SEEDER_PRESETS,
   MATCH_PRESETS,
+  CATEGORY_PRESETS,
   type FilterState,
 } from "../src/sources/filters";
+import type { CategoryFilter } from "../src/sources/categories";
 import type { TorrentResult } from "../src/sources/types";
 
 function r(over: Partial<TorrentResult>): TorrentResult {
@@ -36,6 +40,7 @@ function f(over: {
   time?: string;
   size?: string;
   seeders?: string;
+  category?: CategoryFilter;
   match?: string;
   hideTrash?: boolean;
 }): FilterState {
@@ -43,6 +48,7 @@ function f(over: {
     time: over.time ? TIME_PRESETS.findIndex((p) => p.label === over.time) : 0,
     size: over.size ? SIZE_PRESETS.findIndex((p) => p.label === over.size) : 0,
     seeders: over.seeders ? SEEDER_PRESETS.findIndex((p) => p.label === over.seeders) : 0,
+    category: over.category ?? "all",
     match: over.match ? MATCH_PRESETS.findIndex((p) => p.label === over.match) : 0,
     hideTrash: over.hideTrash === true,
   };
@@ -65,13 +71,17 @@ describe("time window filter", () => {
   const weekSecs = TIME_PRESETS.find((p) => p.label === "week")!.seconds!;
   const list = [
     r({ name: "recent", added: NOW - 10 }),
+    r({ name: "boundary", added: NOW - weekSecs }),
+    r({ name: "oneSecondOutside", added: NOW - weekSecs - 1 }),
     r({ name: "stale", added: NOW - weekSecs - 100 }),
+    r({ name: "future", added: NOW + 10 }),
     r({ name: "undated" }), // no `added`
+    r({ name: "invalid", added: Number.NaN }),
   ];
 
-  it("keeps results inside the window and always keeps undated rows", () => {
+  it("requires a finite known date at or inside the window", () => {
     const out = applyFilters(list, f({ time: "week" }), NOW);
-    expect(out.map((x) => x.name).sort()).toEqual(["recent", "undated"]);
+    expect(out.map((x) => x.name)).toEqual(["recent", "boundary", "future"]);
   });
 
   it("24h window is tighter than week", () => {
@@ -85,7 +95,12 @@ describe("time window filter", () => {
   });
 
   it("'any' time keeps everything", () => {
-    expect(applyFilters(list, f({ time: "any" }), NOW)).toHaveLength(3);
+    expect(applyFilters(list, f({ time: "any" }), NOW)).toHaveLength(7);
+  });
+
+  it("counts every missing or non-finite source date as undated", () => {
+    expect(countUndatedResults(list)).toBe(2);
+    expect(countUndatedResults([r({ added: Number.POSITIVE_INFINITY })])).toBe(1);
   });
 });
 
@@ -137,6 +152,25 @@ describe("seeders filter", () => {
   });
 });
 
+describe("category filter", () => {
+  const list = [
+    r({ name: "movie", category: "Movies/HD" }),
+    r({ name: "series", category: "TV" }),
+    r({ name: "unknown", category: "Books" }),
+    r({ name: "missing" }),
+  ];
+
+  it("filters by normalized category", () => {
+    expect(applyFilters(list, f({ category: "movies" }), NOW).map((x) => x.name))
+      .toEqual(["movie"]);
+  });
+
+  it("exposes unknown and missing categories as Other", () => {
+    expect(applyFilters(list, f({ category: "other" }), NOW).map((x) => x.name))
+      .toEqual(["unknown", "missing"]);
+  });
+});
+
 describe("composition", () => {
   it("applies date, size and seeders together", () => {
     const list = [
@@ -152,6 +186,21 @@ describe("composition", () => {
     );
     expect(out.map((x) => x.name)).toEqual(["keep"]);
   });
+
+  it("composes category and date without allowing stale or undated rows", () => {
+    const list = [
+      r({ name: "recentMovie", added: NOW - 10, category: "Movies/HD" }),
+      r({ name: "recentTv", added: NOW - 10, category: "TV" }),
+      r({ name: "oldMovie", added: NOW - 8 * 24 * 3600, category: "Movies" }),
+      r({ name: "undatedMovie", category: "Movies" }),
+    ];
+
+    expect(
+      applyFilters(list, f({ time: "week", category: "movies" }), NOW).map(
+        (result) => result.name,
+      ),
+    ).toEqual(["recentMovie"]);
+  });
 });
 
 describe("cycle helpers", () => {
@@ -162,6 +211,10 @@ describe("cycle helpers", () => {
     expect(s.time).toBe(0); // wrapped back
     expect(cycleSize(emptyFilters).size).toBe(1);
     expect(cycleSeeders(emptyFilters).seeders).toBe(1);
+    expect(cycleCategory(emptyFilters).category).toBe("movies");
+    let category = emptyFilters;
+    for (let i = 0; i < CATEGORY_PRESETS.length; i++) category = cycleCategory(category);
+    expect(category.category).toBe("all");
     expect(cycleMatch(emptyFilters).match).toBe(1);
     expect(cycleMatch(cycleMatch(emptyFilters)).match).toBe(0);
   });
@@ -192,9 +245,9 @@ describe("match / hideTrash session state", () => {
     expect(isEmptyFilters(f({ hideTrash: true }))).toBe(false);
   });
 
-  it("applyFilters ignores match/hideTrash (time/size/seeders only)", () => {
+  it("applyFilters ignores match/hideTrash (direct filters only)", () => {
     const list = [r({ name: "a" }), r({ name: "b" })];
-    // Same array instance when only match/trash active — no time/size/seeders.
+    // Same array instance when only match/trash is active.
     expect(applyFilters(list, f({ match: "strict", hideTrash: true }), NOW)).toBe(
       list,
     );
@@ -206,6 +259,7 @@ describe("helpers", () => {
     expect(activeFilterCount(emptyFilters)).toBe(0);
     expect(activeFilterCount(f({ time: "week", size: "1-5GB", seeders: ">=5" }))).toBe(3);
     expect(activeFilterCount(f({ seeders: ">0" }))).toBe(1);
+    expect(activeFilterCount(f({ category: "anime" }))).toBe(1);
     expect(activeFilterCount(f({ match: "strict", hideTrash: true }))).toBe(2);
   });
 
@@ -216,5 +270,6 @@ describe("helpers", () => {
     expect(filterSummary(f({ match: "strict", hideTrash: true }))).toBe(
       "match:strict \u00b7 no-trash",
     );
+    expect(filterSummary(f({ category: "other" }))).toBe("category:Other");
   });
 });

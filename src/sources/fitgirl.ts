@@ -76,6 +76,7 @@ function toResults(items: FitGirlItem[]): TorrentResult[] {
     const infoHash = infoHashFromMagnet(it.magnet);
     if (!infoHash) continue;
     const name = cleanText(it.title);
+    if (!name) continue;
     if (name.toLowerCase().includes("updates digest")) continue;
     out.push(
       makeResult(SRC, {

@@ -60,30 +60,45 @@ time and never enabled.
 - **Relevance config** (optional, in the local JSON config under `relevance`):
   `preferQuality` folds release quality into the default cascade after seeders;
   `strictAnd` and `hideTrash` seed the session filters on boot.
+- **Release discovery.** The Discover tab separates weekly Trending titles,
+  recent/upcoming India OTT changes, Blu-ray/4K claims, and a combined India
+  feed. Filter by date window, provider, original/audio language, media type,
+  format, or Indian title origin, then press `s` to search the selected clean
+  title and year. Discovery uses its own normalized cache and never pretends
+  release records are torrents.
 
 ## Usage
 
 ```
 minch                  open the search TUI
 minch "ubuntu 24.04"   open and run an initial search
+minch --discovery-status  show local discovery request usage and limits
 minch --version        print the version
 minch --help           show help
 ```
 
 Keys: `↑/↓` move · `enter` search · `s` sort · `t`/`z`/`x`/`f` filter
 date/size/seeders/match · `r` reset filters · `y` copy magnet · `d`/`o` open
-magnet · `tab` switch Search/Sources · `e` enable · `t`/`T` retest · `m`
-switch mirror · `?` keys · `q` quit.
+magnet · `tab` switch Search/Discover/debrid/Sources/Settings · `e` enable ·
+`t`/`T` retest · `m` switch mirror · `?` keys · `q` quit. In Discover, `←`/`→`
+switch feed, `m`/`p`/`l`/`i`/`t` change filters, `enter` opens details, and `s`
+hands the selected title to torrent search.
 
 Query operators (optional): `"exact phrase"` requires contiguous words in the
 title; `-word` or `!word` drops results containing that token (e.g.
 `"spider man" -cam`).
 
+For the credential-free → TMDB → optional OTT path, Settings instructions,
+cache locations, refresh/retention table, quota behavior, adapter toggles, and
+known limitations, see [Discovery setup and operations](docs/discovery-setup.md).
+
 ## Architecture
 
 No server, no daemon, no Prowlarr dependency. State lives in a local JSON config
-file (enabled/disabled state, selected mirror per source, source health, and
-user-added Torznab sources).
+file (enabled/disabled state, selected mirror per source, source health,
+user-added Torznab sources, and optional user-supplied credentials). Discovery
+snapshots and request counters use separate local cache/ledger files; they are
+not telemetry or export APIs.
 
 Both the Cardigann executor and the native sources implement one `Source`
 interface (`src/sources/types.ts`):
@@ -130,6 +145,32 @@ npm test             # vitest (no live network in the default suite)
 npm run typecheck
 npm run build        # tsup bundle → dist/
 ```
+
+## Discovery data, accuracy, and attribution
+
+Discovery dates, formats, and availability are source claims. Coverage may be
+incomplete, calendars can change, and a provider's
+current availability does not prove when a title arrived. minch-cli preserves
+unknown dates and regions instead of substituting observation time or guessing.
+
+- [TMDB](https://www.themoviedb.org) supplies trending and regional metadata.
+  **This product uses the TMDB API but is not endorsed or certified by TMDB.**
+  TMDB watch-provider availability data is supplied by **JustWatch**. See TMDB's
+  [approved logos and attribution guidance](https://www.themoviedb.org/about/logos-attribution).
+- [Streaming Availability API by Movie of the Night](https://www.movieofthenight.com/about/api)
+  supplies India catalogue-change/provider claims and is credited beside its
+  data, including when a retained snapshot is shown from cache.
+- [Blu-ray.com](https://www.blu-ray.com) supplies advertised release dates and
+  links for the restricted RSS pilot. RSS rows have unknown region unless the
+  source explicitly says otherwise; generic TMDB physical records are not
+  relabeled as Blu-ray.
+
+TMDB developer access is limited to qualifying **non-commercial** use. Before
+minch-cli or a downstream distribution becomes revenue-generating, revisit all
+source terms and obtain the required commercial licensing; disable TMDB until a
+separate written agreement permits that use. The detailed source boundaries and
+review triggers are recorded in
+[`docs/decisions/001-zero-cost-discovery-sources.md`](docs/decisions/001-zero-cost-discovery-sources.md).
 
 ## Credits & license
 

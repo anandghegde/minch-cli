@@ -5,8 +5,8 @@ import { useTrending } from "../hooks/useTrending";
 import { activeMirror, isEnabled } from "../../sources/registry";
 import {
   TRENDING_CATEGORIES,
-  filterByCategory,
 } from "../../sources/trending";
+import { filterByCategory } from "../../sources/categories";
 import { formatBytes, formatRelative, truncate, cleanText } from "../../util/format";
 import type { TorrentResult } from "../../sources/types";
 import { COLOR, ICON } from "../theme";

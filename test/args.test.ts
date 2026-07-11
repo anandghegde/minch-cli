@@ -10,6 +10,7 @@ describe("parseCliArgs", () => {
     expect(parseCliArgs(["-v"]).kind).toBe("version");
     expect(parseCliArgs(["--help"]).kind).toBe("help");
     expect(parseCliArgs(["-h"]).kind).toBe("help");
+    expect(parseCliArgs(["--discovery-status"])).toEqual({ kind: "discovery-status" });
   });
   it("treats plain args as an initial query", () => {
     expect(parseCliArgs(["ubuntu", "24.04"])).toEqual({

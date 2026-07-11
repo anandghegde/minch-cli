@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { useStore } from "../store";
+import { useDownloadStore } from "../download-store";
 import { formatBytes, formatRelative, truncate, cleanText } from "../../util/format";
 import type { DebridId, Transfer, TransferFile, TransferStatus } from "../../debrid/types";
 import { PROVIDER_LABELS } from "../../debrid/types";
@@ -134,7 +135,9 @@ export function ProviderTransfers({
   active: boolean;
 }) {
   const store = useStore();
-  const { transfersLoading, transfersUpdatedAt, downloads, listRows, cols } = store;
+  const downloadStore = useDownloadStore();
+  const { transfersLoading, transfersUpdatedAt, listRows, cols } = store;
+  const { downloads } = downloadStore;
 
   const label = PROVIDER_LABELS[provider];
   const configured = store.providerConfigured(provider);
@@ -165,7 +168,7 @@ export function ProviderTransfers({
       setPicker({ transfer: t, cursor: 0 });
       return;
     }
-    store.downloadLocally(t, t.files[0]);
+    downloadStore.downloadLocally(t, t.files[0]);
   };
 
   useInput(
@@ -181,10 +184,10 @@ export function ProviderTransfers({
           setPicker((p) => (p ? { ...p, cursor: Math.max(0, p.cursor - 1) } : p));
         } else if (key.return) {
           if (picker.cursor === 0) {
-            for (const f of picker.transfer.files) store.downloadLocally(picker.transfer, f);
+            for (const f of picker.transfer.files) downloadStore.downloadLocally(picker.transfer, f);
           } else {
             const f = picker.transfer.files[picker.cursor - 1];
-            if (f) store.downloadLocally(picker.transfer, f);
+            if (f) downloadStore.downloadLocally(picker.transfer, f);
           }
           setPicker(null);
         }
@@ -204,7 +207,7 @@ export function ProviderTransfers({
           (d) => d.status === "active" || d.status === "queued",
         );
         const target = forCurrent ?? fallback;
-        if (target) store.cancelDownload(target.id);
+        if (target) downloadStore.cancelDownload(target.id);
         else store.setNotice("No active download to cancel.");
         return;
       }
@@ -213,7 +216,7 @@ export function ProviderTransfers({
           ? providerDownloads.find((d) => d.status === "done" && d.transferId === current.id)
           : undefined;
         const target = doneForCurrent ?? providerDownloads.find((d) => d.status === "done");
-        if (target) store.openDownload(target);
+        if (target) downloadStore.openDownload(target);
         else store.setNotice("No finished download to open.");
         return;
       }

@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { loadDefinition } from "../src/cardigann/loader";
 import {
   buildRequest,
+  executeSearch,
   parseHtmlResults,
   parseJsonResults,
 } from "../src/cardigann/executor";
@@ -94,6 +95,38 @@ describe("executor — HTML parsing", () => {
     const results = parseHtmlResults(HTML, HTML_DEF, catMap, {}, "https://example.test/", "", false);
     expect(results[1]!.infoHash).toBe("89abcdef0123456789abcdef0123456789abcdef");
   });
+
+  it("does not leak optional .Result variables between rows", () => {
+    const def = loadDefinition(`
+id: row-state
+name: Row State
+type: public
+links: [https://example.test/]
+caps: { categories: {}, modes: { search: [q] } }
+search:
+  paths: [{ path: search }]
+  rows: { selector: tr }
+  fields:
+    title|optional:
+      selector: .title
+      default: "{{ .Result.title }}"
+    magnet: { selector: .magnet, attribute: href }
+`);
+    const vars = { ".Keywords": "movie" };
+    const results = parseHtmlResults(
+      `<table><tr><td class="title">First result</td><td><a class="magnet" href="magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567">M</a></td></tr>
+      <tr><td><a class="magnet" href="magnet:?xt=urn:btih:89abcdef0123456789abcdef0123456789abcdef">M</a></td></tr></table>`,
+      def,
+      buildCategoryMap(def.caps),
+      vars,
+      "https://example.test/",
+      "https://example.test/search",
+      false,
+    );
+
+    expect(results.map((result) => result.title)).toEqual(["First result"]);
+    expect(vars).not.toHaveProperty(".Result.title");
+  });
 });
 
 const JSON_DEF = loadDefinition(`
@@ -150,6 +183,44 @@ describe("executor — JSON parsing", () => {
   });
 });
 
+const XML_DEF = loadDefinition(`
+id: xmlex
+name: XmlEx
+type: public
+encoding: UTF-8
+links: [https://api.test/]
+caps: { categories: {}, modes: { search: [q] } }
+search:
+  paths:
+    - path: feed.xml
+      response: { type: xml }
+  rows: { selector: item }
+  fields:
+    title: { selector: title }
+    infohash: { selector: infohash }
+    seeders: { selector: seeders }
+`);
+
+describe("executor — XML parsing", () => {
+  it("extracts XML rows through the shared selector pipeline", () => {
+    const results = parseHtmlResults(
+      `<rss><channel><item><title>XML Movie</title><infohash>0123456789abcdef0123456789abcdef01234567</infohash><seeders>12</seeders></item></channel></rss>`,
+      XML_DEF,
+      buildCategoryMap(XML_DEF.caps),
+      {},
+      "https://api.test/",
+      "https://api.test/feed.xml",
+      true,
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      title: "XML Movie",
+      infoHash: "0123456789abcdef0123456789abcdef01234567",
+      seeders: 12,
+    });
+  });
+});
+
 describe("executor — request building", () => {
   it("substitutes keywords into path inputs (GET query string)", () => {
     const req = buildRequest(
@@ -183,5 +254,52 @@ search:
     const req = buildRequest(def, def.search.paths![0]!, { ".Keywords": "dune" }, "https://r.test/");
     expect(req.url).toContain("q=dune");
     expect(req.url).toContain("cat=movies");
+  });
+
+  it("sends POST inputs as a form with an explicit content type", async () => {
+    const def = loadDefinition(`
+id: postex
+name: PostEx
+type: public
+links: [https://post.test/]
+caps: { categories: {}, modes: { search: [q] } }
+search:
+  paths:
+    - path: search
+      method: post
+  inputs:
+    q: "{{ .Keywords }}"
+  rows: { selector: tr }
+  fields:
+    title: { selector: .title }
+    magnet: { selector: .magnet, attribute: href }
+`);
+    let captured: RequestInit | undefined;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      captured = init;
+      return new Response(
+        `<table><tr><td class="title">Result</td><td><a class="magnet" href="magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567">M</a></td></tr></table>`,
+      );
+    };
+
+    await executeSearch(def, "foo", "https://post.test/", { fetchImpl });
+
+    expect(captured?.method).toBe("POST");
+    expect(captured?.body).toBe("q=foo");
+    expect(new Headers(captured?.headers).get("content-type")).toBe(
+      "application/x-www-form-urlencoded;charset=UTF-8",
+    );
+  });
+
+  it("routes search requests through the supplied source governor", async () => {
+    const governor = { wait: vi.fn(async () => {}) };
+    const fetchImpl: typeof fetch = async () => new Response("<table></table>");
+
+    await executeSearch(HTML_DEF, "foo", "https://example.test/", {
+      fetchImpl,
+      requestGovernor: governor,
+    });
+
+    expect(governor.wait).toHaveBeenCalledTimes(1);
   });
 });

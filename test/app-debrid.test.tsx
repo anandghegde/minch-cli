@@ -34,6 +34,8 @@ describe("App debrid integration", () => {
   beforeEach(async () => {
     delete process.env.MINCH_TORBOX_KEY;
     delete process.env.MINCH_REALDEBRID_KEY;
+    vi.stubEnv("TMDB_READ_TOKEN", "");
+    vi.stubEnv("STREAMING_AVAILABILITY_API_KEY", "");
     vi.stubGlobal("fetch", torboxStub());
     await fs.mkdir(configFile.replace(/\/[^/]+$/, ""), { recursive: true });
     await fs.writeFile(
@@ -47,7 +49,10 @@ describe("App debrid integration", () => {
       "utf8",
     );
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
 
   it("cycles the provider tabs, scoping guidance per provider", async () => {
     const { lastFrame, stdin, unmount } = render(createElement(App, { onQuit: () => {} }));
@@ -78,6 +83,13 @@ describe("App debrid integration", () => {
     await settle();
     expect((lastFrame() ?? "").toLowerCase()).toMatch(/source/);
 
+    // sources -> settings, where persisted preferences and credentials are managed.
+    stdin.write("\t");
+    await settle(300);
+    expect(lastFrame()).toContain("Settings");
+    expect(lastFrame()).toContain("Download folder");
+    expect(lastFrame()).toContain("Streaming Availability key");
+
     unmount();
   });
 
@@ -94,6 +106,53 @@ describe("App debrid integration", () => {
     expect(frame).toContain("1234");
     expect(frame).not.toContain("tbkeyABCD1234");
 
+    unmount();
+  });
+
+  it("persists the download folder from Settings", async () => {
+    const { lastFrame, stdin, unmount } = render(createElement(App, { onQuit: () => {} }));
+    await settle(800);
+
+    for (let i = 0; i < 5; i++) stdin.write("\t");
+    await settle();
+    expect(lastFrame()).toContain("Settings");
+
+    stdin.write("j");
+    await settle();
+    stdin.write("j");
+    await settle();
+    stdin.write("\r");
+    await settle();
+    stdin.write("/tmp/minch-downloads");
+    await settle();
+    stdin.write("\r");
+    await settle();
+
+    const saved = JSON.parse(await fs.readFile(configFile, "utf8")) as {
+      debrid?: { downloadDir?: string };
+    };
+    expect(saved.debrid?.downloadDir).toBe("/tmp/minch-downloads");
+    unmount();
+  });
+
+  it("persists an explicit Blu-ray discovery disable", async () => {
+    const { lastFrame, stdin, unmount } = render(createElement(App, { onQuit: () => {} }));
+    await settle(800);
+    for (let index = 0; index < 5; index += 1) stdin.write("\t");
+    await settle(100);
+    expect(lastFrame()).toContain("Settings");
+
+    for (let index = 0; index < 7; index += 1) stdin.write("j");
+    await settle();
+    expect(lastFrame()).toContain("Blu-ray RSS discovery");
+    stdin.write(" ");
+    await settle(100);
+
+    const saved = JSON.parse(await fs.readFile(configFile, "utf8")) as {
+      discovery?: { disabledSources?: string[] };
+    };
+    expect(saved.discovery?.disabledSources).toContain("bluray");
+    expect(lastFrame()).toContain("Blu-ray RSS discovery disabled");
     unmount();
   });
 });

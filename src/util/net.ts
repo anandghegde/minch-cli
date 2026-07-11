@@ -8,16 +8,20 @@ export interface FetchResilientOptions extends RequestInit {
   retries?: number;
   baseMs?: number;
   capMs?: number;
+  /** Set false when the caller must inspect non-OK status/body/headers itself. */
+  retryStatuses?: boolean;
   fetchImpl?: FetchImpl;
   sleepImpl?: SleepImpl;
 }
 
 export class HttpError extends Error {
   status: number;
-  constructor(status: number, message?: string) {
+  retryAfterMs?: number;
+  constructor(status: number, message?: string, retryAfterMs?: number) {
     super(message ?? `HTTP ${status}`);
     this.name = "HttpError";
     this.status = status;
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -35,6 +39,11 @@ function isAbortError(e: unknown): boolean {
   return (
     e instanceof Error && (e.name === "AbortError" || /aborted/i.test(e.message))
   );
+}
+
+/** Release a response body that will not be returned to a caller. */
+export async function disposeResponse(res: Response): Promise<void> {
+  await res.body?.cancel().catch(() => {});
 }
 
 export function parseRetryAfter(
@@ -75,6 +84,7 @@ export async function fetchResilient(
     retries = DEFAULT_RETRIES,
     baseMs = DEFAULT_BASE_MS,
     capMs = DEFAULT_CAP_MS,
+    retryStatuses = true,
     fetchImpl = fetch as FetchImpl,
     sleepImpl = realSleep,
     signal,
@@ -100,13 +110,14 @@ export async function fetchResilient(
       throw e;
     }
 
-    if (!RETRY_STATUS.has(res.status)) return res;
+    if (!retryStatuses || !RETRY_STATUS.has(res.status)) return res;
 
     const server = res.headers.get("server")?.toLowerCase() || "";
     if (
       res.status === 503 &&
       (server.includes("ddos-guard") || server.includes("cloudflare"))
     ) {
+      await disposeResponse(res);
       throw new HttpError(
         res.status,
         `Request to ${url} blocked by ${server} (HTTP ${res.status}).`,
@@ -114,13 +125,17 @@ export async function fetchResilient(
     }
 
     if (attempt >= retries) {
+      const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"));
+      await disposeResponse(res);
       throw new HttpError(
         res.status,
         `Request to ${url} failed after ${retries} retries (HTTP ${res.status}).`,
+        retryAfterMs,
       );
     }
 
     const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"));
+    await disposeResponse(res);
     await sleepImpl(backoffDelay(attempt, baseMs, capMs, retryAfterMs));
   }
 
@@ -137,6 +152,9 @@ export async function fetchText(
     headers: { "User-Agent": USER_AGENT, ...(opts.headers ?? {}) },
     ...opts,
   });
-  if (!res.ok) throw new HttpError(res.status, `${url} returned ${res.status}`);
+  if (!res.ok) {
+    await disposeResponse(res);
+    throw new HttpError(res.status, `${url} returned ${res.status}`);
+  }
   return res.text();
 }

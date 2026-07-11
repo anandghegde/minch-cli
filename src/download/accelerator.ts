@@ -29,7 +29,7 @@ export interface DownloadOptions {
   signal?: AbortSignal;
   onProgress?: (p: DownloadProgress) => void;
   /** Called when the URL appears expired/forbidden, to fetch a fresh one. */
-  reResolve?: () => Promise<string>;
+  reResolve?: (signal?: AbortSignal) => Promise<string>;
   /** Injectable fetch (tests). Defaults to the global fetch. */
   fetchImpl?: FetchImpl;
   /** Injectable sleep (tests). Defaults to setTimeout. */
@@ -109,6 +109,29 @@ export function parseContentRangeTotal(value: string | null): number | undefined
   if (!value) return undefined;
   const m = /\/(\d+)\s*$/.exec(value.trim());
   return m ? Number(m[1]) : undefined;
+}
+
+export interface ContentRange {
+  start: number;
+  end: number;
+  total?: number;
+}
+
+/** Parse a `Content-Range: bytes <start>-<end>/<total|*>` response header. */
+export function parseContentRange(value: string | null): ContentRange | undefined {
+  if (!value) return undefined;
+  const match = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)\s*$/i.exec(value);
+  if (!match) return undefined;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  const total = match[3] === "*" ? undefined : Number(match[3]);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start) {
+    return undefined;
+  }
+  if (total !== undefined && (!Number.isSafeInteger(total) || total <= end)) {
+    return undefined;
+  }
+  return { start, end, total };
 }
 
 /** EWMA speed estimator. Feed cumulative bytes + a timestamp; get bytes/sec. */
@@ -218,15 +241,23 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-/** Resolve a non-colliding final path in `dir`, suffixing ` (1)`, ` (2)`, … */
-export async function resolveCollision(dir: string, name: string): Promise<string> {
+/**
+ * Resolve a non-colliding final path in `dir`, suffixing ` (1)`, ` (2)`, ….
+ * `claim` runs synchronously after the filesystem check, letting an in-process
+ * manager reserve a candidate before another concurrent caller can use it.
+ */
+export async function resolveCollision(
+  dir: string,
+  name: string,
+  claim?: (candidate: string) => boolean,
+): Promise<string> {
   const safe = sanitizeFilename(name);
   const ext = path.extname(safe);
   const stem = safe.slice(0, safe.length - ext.length) || safe;
   let candidate = safe;
   for (let i = 1; ; i++) {
     const full = path.join(dir, candidate);
-    if (!(await pathExists(full))) return full;
+    if (!(await pathExists(full)) && (!claim || claim(full))) return full;
     candidate = `${stem} (${i})${ext}`;
   }
 }
@@ -238,6 +269,13 @@ interface ProbeResult {
   acceptRanges: boolean;
   etag?: string;
   lastModified?: string;
+}
+
+class ResourceChangedError extends Error {
+  constructor(readonly fresh: ProbeResult) {
+    super("download URL resolved to a different resource");
+    this.name = "ResourceChangedError";
+  }
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -291,7 +329,7 @@ export async function downloadFile(
     if (!opts.reResolve) throw new HttpError(403, "link expired and no reResolve");
     if (!refreshing) {
       refreshing = Promise.resolve()
-        .then(() => opts.reResolve!())
+        .then(() => opts.reResolve!(combined.signal))
         .then(
           (u) => {
             currentUrl = u;
@@ -383,9 +421,15 @@ export async function downloadFile(
       await fs.rm(sidecarPath(part), { force: true });
     }
 
-    const fh = await fs.open(part, resumable ? "r+" : "w+");
+    const file = await fs.open(part, resumable ? "r+" : "w+");
+    let closed = false;
+    const closeFile = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      await file.close();
+    };
     try {
-      await fh.truncate(total); // pre-allocate so workers can pwrite at any offset
+      await file.truncate(total); // pre-allocate so workers can pwrite at any offset
 
     const sidecar: Sidecar = {
       version: 1,
@@ -431,6 +475,31 @@ export async function downloadFile(
     const claim = (): number | undefined =>
       cursor < pending.length ? pending[cursor++] : undefined;
     let fatal: unknown = null;
+    let segmentRefresh: Promise<void> | null = null;
+
+    const refreshSegmentUrl = async (): Promise<void> => {
+      if (!segmentRefresh) {
+        segmentRefresh = (async () => {
+          await refreshUrl();
+          const fresh = await probe();
+          const sameLength = fresh.totalBytes === total;
+          const validators = [
+            probeMeta.etag && fresh.etag ? probeMeta.etag === fresh.etag : undefined,
+            probeMeta.lastModified && fresh.lastModified
+              ? probeMeta.lastModified === fresh.lastModified
+              : undefined,
+          ].filter((match): match is boolean => match !== undefined);
+          // If a validator is unavailable on either URL, restart conservatively
+          // rather than mixing bytes that merely happen to have the same length.
+          if (!sameLength || validators.length === 0 || validators.some((match) => !match)) {
+            throw new ResourceChangedError(fresh);
+          }
+        })().finally(() => {
+          segmentRefresh = null;
+        });
+      }
+      return segmentRefresh;
+    };
 
     type Attempt =
       | { kind: "done" }
@@ -472,6 +541,18 @@ export async function downloadFile(
         }
         throw new HttpError(res.status, `chunk ${c.index}: HTTP ${res.status}`);
       }
+      if (res.status === 206) {
+        const range = parseContentRange(res.headers.get("content-range"));
+        if (
+          !range ||
+          range.start !== c.start ||
+          range.end !== c.end ||
+          range.total !== total
+        ) {
+          await drain(res);
+          throw new Error(`chunk ${c.index}: mismatched Content-Range`);
+        }
+      }
 
       const reader = res.body?.getReader();
       let pos = c.start;
@@ -480,7 +561,7 @@ export async function downloadFile(
           const { done, value } = await reader.read();
           if (done) break;
           if (value && value.byteLength) {
-            await fh.write(value, 0, value.byteLength, pos);
+            await file.write(value, 0, value.byteLength, pos);
             pos += value.byteLength;
             attemptBytes += value.byteLength;
             live += value.byteLength;
@@ -525,7 +606,7 @@ export async function downloadFile(
         if (outcome.kind === "expired") {
           if (!opts.reResolve || reResolves >= MAX_RERESOLVES) throw outcome.error;
           reResolves++;
-          await refreshUrl();
+          await refreshSegmentUrl();
           continue;
         }
         if (attempt >= retries) throw outcome.error;
@@ -547,11 +628,15 @@ export async function downloadFile(
           // chunk as complete in the sidecar. Otherwise a crash between
           // persistSidecar() and the final sync leaves the sidecar claiming the
           // chunk is done while its bytes are lost → silent corruption on resume.
-          await fh.sync();
+          await file.sync();
           completed.add(idx);
           await persistSidecar();
         } catch (e) {
           if (e instanceof DownloadCanceledError || aborted()) return;
+          if (e instanceof ResourceChangedError) {
+            fatal ??= e;
+            return;
+          }
           fatal ??= e;
           internalAbort.abort();
           return;
@@ -567,17 +652,29 @@ export async function downloadFile(
     }
 
     if (fatal) {
+      if (fatal instanceof ResourceChangedError) {
+        await closeFile();
+        await fs.rm(part, { force: true });
+        await fs.rm(sidecarPath(part), { force: true });
+        const fresh = fatal.fresh;
+        return fresh.acceptRanges && fresh.totalBytes !== undefined && fresh.totalBytes > 0
+          ? segmented(fresh.totalBytes, fresh)
+          : singleStream(fresh);
+      }
       throw fatal;
     }
     if (opts.signal?.aborted) {
       throw new DownloadCanceledError();
     }
 
-    await fh.sync();
+    await file.sync();
     const stat = await fs.stat(part);
     if (stat.size !== total) {
       throw new Error(`download size mismatch: ${stat.size} != ${total}`);
     }
+    // Windows and several network filesystems do not allow the final rename
+    // while a file handle is open. All workers and fsync are complete here.
+    await closeFile();
     await fs.rename(part, dest);
     await fs.rm(sidecarPath(part), { force: true });
     opts.onProgress?.({
@@ -593,7 +690,7 @@ export async function downloadFile(
       // A3: ensure the file descriptor is released on every exit path
       // (success, fatal, abort, size mismatch, rename failure). Previously closes
       // were scattered and skipped when fh.truncate/fh.sync rejected.
-      await fh.close().catch(() => {});
+      await closeFile().catch(() => {});
     }
   }
 

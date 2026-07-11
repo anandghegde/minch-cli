@@ -1,0 +1,24 @@
+{
+  "id": 1001,
+  "results": {
+    "IN": {
+      "buy": [
+        {
+          "display_priority": 1,
+          "logo_path": "/fixture-store.png",
+          "provider_id": 101,
+          "provider_name": "Example Store"
+        }
+      ],
+      "link": "https://www.themoviedb.org/movie/1001/watch?locale=IN",
+      "rent": [
+        {
+          "display_priority": 1,
+          "logo_path": "/fixture-store.png",
+          "provider_id": 101,
+          "provider_name": "Example Store"
+        }
+      ]
+    }
+  }
+}

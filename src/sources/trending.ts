@@ -1,4 +1,8 @@
 import type { SearchOptions, Source, TorrentResult } from "./types";
+import type { CategoryFilter } from "./categories";
+
+export { classifyCategory, filterByCategory } from "./categories";
+export type { ResultCategory } from "./categories";
 
 /**
  * Trending / browse support. Pure and side-effect free apart from `browseSource`
@@ -17,16 +21,7 @@ export function browseSource(
 
 /** Chip categories shown on the Trending tab. "all" is the unfiltered view. */
 export type TrendingCategory =
-  | "all"
-  | "movies"
-  | "tv"
-  | "anime"
-  | "games"
-  | "xxx"
-  | "music";
-
-/** The concrete bucket a single result maps to (never "all"). */
-export type ResultCategory = Exclude<TrendingCategory, "all"> | "other";
+  Exclude<CategoryFilter, "other">;
 
 export interface TrendingChip {
   category: TrendingCategory;
@@ -43,30 +38,3 @@ export const TRENDING_CATEGORIES: TrendingChip[] = [
   { category: "xxx", label: "XXX" },
   { category: "music", label: "Music" },
 ];
-
-/**
- * Bucket a result's coarse `category` label (e.g. "Movies", "TV/Anime",
- * "Video", "Audio") into a trending chip. Sources supply wildly different
- * strings, so we normalize the head segment and match known synonyms. Anything
- * unrecognized (or missing) is "other" and only shows under "All".
- */
-export function classifyCategory(category: string | undefined): ResultCategory {
-  if (!category) return "other";
-  const head = category.split("/")[0]!.trim().toLowerCase();
-  if (head === "movies" || head === "movie" || head === "video") return "movies";
-  if (head === "tv") return "tv";
-  if (head === "anime") return "anime";
-  if (head === "games" || head === "game" || head === "console") return "games";
-  if (head === "xxx" || head === "porn" || head === "adult") return "xxx";
-  if (head === "audio" || head === "music") return "music";
-  return "other";
-}
-
-/** Filter results to a chip category. "all" returns the input unchanged. */
-export function filterByCategory(
-  results: TorrentResult[],
-  category: TrendingCategory,
-): TorrentResult[] {
-  if (category === "all") return results;
-  return results.filter((r) => classifyCategory(r.category) === category);
-}

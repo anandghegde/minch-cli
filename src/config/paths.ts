@@ -13,3 +13,5 @@ const configDir = override ? path.join(override, "config") : base.config;
 
 export const configFile = path.join(configDir, "config.json");
 export const cacheFile = path.join(dataDir, "search-cache.json");
+export const discoveryCacheFile = path.join(dataDir, "discovery-cache.json");
+export const discoveryUsageFile = path.join(dataDir, "discovery-usage.json");

@@ -1,6 +1,7 @@
 import { applyLimit, runProbe } from "../sources/adapter";
 import { executeSearch } from "./executor";
 import { definitionRequiresConfig } from "./loader";
+import { createRequestGovernor } from "./rate-limit";
 import type { CardigannDefinition } from "./model";
 import type {
   SearchOptions,
@@ -48,13 +49,17 @@ export function createCardigannSource(
   getBaseUrl: () => string,
 ): Source {
   const requiresConfig = definitionRequiresConfig(def);
+  const requestGovernor = createRequestGovernor(def.requestDelay);
 
   async function search(
     query: string,
     opts: SearchOptions & { baseUrl?: string } = {},
   ): Promise<TorrentResult[]> {
     const base = opts.baseUrl ?? getBaseUrl();
-    const raw = await executeSearch(def, query, base, { signal: opts.signal });
+    const raw = await executeSearch(def, query, base, {
+      signal: opts.signal,
+      requestGovernor,
+    });
     return applyLimit(toTorrentResults(def, raw), opts);
   }
 

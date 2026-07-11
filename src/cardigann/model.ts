@@ -94,6 +94,7 @@ export interface CardigannDefinition {
   type: string;
   language?: string;
   encoding?: string;
+  /** Upstream Cardigann request rate, in requests per second. */
   requestDelay?: number;
   links: string[];
   legacylinks?: string[];

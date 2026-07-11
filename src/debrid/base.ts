@@ -47,7 +47,11 @@ export interface DebridBase {
   call(
     key: string,
     path: string,
-    init?: RequestInit & { signal?: AbortSignal; retries?: number },
+    init?: RequestInit & {
+      signal?: AbortSignal;
+      retries?: number;
+      retryStatuses?: boolean;
+    },
   ): Promise<Response>;
   /** Best-effort JSON body parse; undefined for empty/invalid bodies. */
   readJson<T>(res: Response): Promise<T | undefined>;
@@ -85,14 +89,19 @@ export function createDebridBase(config: Config, opts: DebridBaseOptions): Debri
   async function call(
     key: string,
     path: string,
-    init: RequestInit & { signal?: AbortSignal; retries?: number } = {},
+    init: RequestInit & {
+      signal?: AbortSignal;
+      retries?: number;
+      retryStatuses?: boolean;
+    } = {},
   ): Promise<Response> {
-    const { retries = 2, headers, signal, ...rest } = init;
+    const { retries = 2, retryStatuses = false, headers, signal, ...rest } = init;
     try {
       return await fetchResilient(`${opts.baseUrl}${path}`, {
         ...rest,
         signal,
         retries,
+        retryStatuses,
         headers: {
           Authorization: `Bearer ${key}`,
           Accept: "application/json",

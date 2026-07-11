@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import { fetchResilient, HttpError, USER_AGENT } from "../util/net";
+import { disposeResponse, fetchResilient, HttpError, USER_AGENT } from "../util/net";
 import type { TestResult, TorrentResult } from "./types";
 
 /**
@@ -32,7 +32,9 @@ export function errorToCode(e: unknown, aborted: boolean): string {
 
 /** Apply opts.limit to a result array when set. */
 export function applyLimit<T>(rows: T[], opts: { limit?: number }): T[] {
-  return typeof opts.limit === "number" ? rows.slice(0, opts.limit) : rows;
+  if (opts.limit === undefined) return rows;
+  if (!Number.isFinite(opts.limit) || opts.limit <= 0) return [];
+  return rows.slice(0, Math.floor(opts.limit));
 }
 
 /**
@@ -96,7 +98,10 @@ export async function fetchJson<T>(
   opts: FetchOpts = {},
 ): Promise<T> {
   const res = await fetchResilient(url, resilientOpts(opts));
-  if (!res.ok) throw new HttpError(res.status, `${url} returned ${res.status}`);
+  if (!res.ok) {
+    await disposeResponse(res);
+    throw new HttpError(res.status, `${url} returned ${res.status}`);
+  }
   return (await res.json()) as T;
 }
 
@@ -117,6 +122,7 @@ export async function fetchFirstOk<T>(
     try {
       const res = await fetchResilient(url, resilientOpts(opts));
       if (res.ok) return await parse(res);
+      await disposeResponse(res);
       lastError = new HttpError(res.status, `${url} returned ${res.status}`);
     } catch (e) {
       if (opts.signal?.aborted) throw e;

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Blu-ray.com - Movies - New Releases</title>
+    <link>https://www.blu-ray.com/</link>
+    <description>Sanitized release-feed fixture</description>
+    <language>en-us</language>
+    <pubDate>Thu, 09 Jul 2026 05:20:44 -0400</pubDate>
+    <lastBuildDate>Thu, 09 Jul 2026 05:20:44 -0400</lastBuildDate>
+    <ttl>30</ttl>
+    <item>
+      <title>The Elephant Man (Blu-ray)</title>
+      <link>https://www.blu-ray.com/movies/fixture-elephant-man-bluray/1/</link>
+      <description><![CDATA[Sanitized Blu-ray release entry.]]></description>
+      <pubDate>Tue, 07 Jul 2026 00:00:00 -0400</pubDate>
+      <category>blu-ray</category>
+      <guid>https://www.blu-ray.com/movies/fixture-elephant-man-bluray/1/</guid>
+    </item>
+    <item>
+      <title>The Elephant Man 4K (Blu-ray)</title>
+      <link>https://www.blu-ray.com/movies/fixture-elephant-man-4k/2/</link>
+      <description><![CDATA[Sanitized explicit 4K variant.]]></description>
+      <pubDate>Tue, 07 Jul 2026 00:00:00 -0400</pubDate>
+      <category>blu-ray</category>
+      <guid>https://www.blu-ray.com/movies/fixture-elephant-man-4k/2/</guid>
+    </item>
+    <item>
+      <title>Monsoon Letters (Blu-ray)</title>
+      <link>https://www.blu-ray.com/movies/fixture-monsoon-letters/3/</link>
+      <description><![CDATA[An anonymized Indian-title test variant.]]></description>
+      <pubDate>Fri, 10 Jul 2026 00:00:00 -0400</pubDate>
+      <category>blu-ray</category>
+      <guid>https://www.blu-ray.com/movies/fixture-monsoon-letters/3/</guid>
+    </item>
+    <item>
+      <title>Unknown Date (Blu-ray)</title>
+      <link>https://www.blu-ray.com/movies/fixture-unknown-date/4/</link>
+      <description><![CDATA[A synthetic missing-date test variant.]]></description>
+      <category>blu-ray</category>
+      <guid>https://www.blu-ray.com/movies/fixture-unknown-date/4/</guid>
+    </item>
+    <item>
+      <title>Monsoon Letters (Blu-ray)</title>
+      <link>https://www.blu-ray.com/movies/fixture-monsoon-letters-no-guid/5/</link>
+      <description><![CDATA[A synthetic duplicate-title and missing-GUID test variant.]]></description>
+      <pubDate>Sat, 11 Jul 2026 00:00:00 -0400</pubDate>
+      <category>blu-ray</category>
+    </item>
+  </channel>
+</rss>

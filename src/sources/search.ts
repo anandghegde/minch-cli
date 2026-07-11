@@ -2,6 +2,22 @@ import type { TorrentResult } from "./types";
 import { logSeeders } from "./relevance";
 import { parseReleaseName, qualityRank } from "./releasename";
 
+function stableResultKey(result: TorrentResult): string {
+  return `${result.source}\u0000${result.name.toLocaleLowerCase()}\u0000${result.infoHash}`;
+}
+
+function stableTiebreak(a: TorrentResult, b: TorrentResult): number {
+  return stableResultKey(a).localeCompare(stableResultKey(b));
+}
+
+function compareKnownDates(a: TorrentResult, b: TorrentResult, dir: SortDir): number {
+  const aKnown = Number.isFinite(a.added);
+  const bKnown = Number.isFinite(b.added);
+  if (aKnown !== bKnown) return aKnown ? -1 : 1;
+  if (!aKnown) return 0;
+  return dir === "asc" ? a.added! - b.added! : b.added! - a.added!;
+}
+
 /**
  * Deduplicate results. Primary key is the info hash; when absent (download-URL
  * only sources), fall back to a normalized title+size key so the same release
@@ -35,7 +51,7 @@ export interface SortState {
 export function defaultOrder(list: TorrentResult[]): TorrentResult[] {
   return list.slice().sort((a, b) => {
     if (b.seeders !== a.seeders) return b.seeders - a.seeders;
-    return (b.added ?? 0) - (a.added ?? 0);
+    return (b.added ?? 0) - (a.added ?? 0) || stableTiebreak(a, b);
   });
 }
 
@@ -44,27 +60,34 @@ export function sortResults(list: TorrentResult[], sort: SortState): TorrentResu
   const mul = sort.dir === "asc" ? 1 : -1;
   switch (sort.field) {
     case "seeders":
-      arr.sort((a, b) => mul * (a.seeders - b.seeders) || (b.added ?? 0) - (a.added ?? 0));
+      arr.sort((a, b) =>
+        mul * (a.seeders - b.seeders) || (b.added ?? 0) - (a.added ?? 0) || stableTiebreak(a, b),
+      );
       break;
     case "size":
-      arr.sort((a, b) => mul * (a.sizeBytes - b.sizeBytes) || b.seeders - a.seeders);
+      arr.sort((a, b) =>
+        mul * (a.sizeBytes - b.sizeBytes) || b.seeders - a.seeders || stableTiebreak(a, b),
+      );
       break;
     case "source":
       arr.sort(
         (a, b) =>
           mul * (a.sourceLabel ?? a.source).localeCompare(b.sourceLabel ?? b.source) ||
-          b.seeders - a.seeders,
+          b.seeders - a.seeders ||
+          stableTiebreak(a, b),
       );
       break;
     case "date":
-      arr.sort((a, b) => mul * ((a.added ?? 0) - (b.added ?? 0)) || b.seeders - a.seeders);
+      arr.sort((a, b) =>
+        compareKnownDates(a, b, sort.dir) || b.seeders - a.seeders || stableTiebreak(a, b),
+      );
       break;
     case "quality":
       arr.sort((a, b) => {
         const qa = qualityRank(parseReleaseName(a.name));
         const qb = qualityRank(parseReleaseName(b.name));
         // desc: higher quality first; seeders are always a desc tiebreaker.
-        return mul * (qa - qb) || logSeeders(b.seeders) - logSeeders(a.seeders);
+        return mul * (qa - qb) || logSeeders(b.seeders) - logSeeders(a.seeders) || stableTiebreak(a, b);
       });
       break;
   }

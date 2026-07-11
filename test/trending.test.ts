@@ -1,10 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  classifyCategory,
-  filterByCategory,
   browseSource,
   TRENDING_CATEGORIES,
 } from "../src/sources/trending";
+import { classifyCategory, filterByCategory } from "../src/sources/categories";
 import type { Source, TorrentResult } from "../src/sources/types";
 
 const HASH = "a".repeat(40);

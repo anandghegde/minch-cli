@@ -1,0 +1,18 @@
+{
+  "id": 1005,
+  "results": [
+    {
+      "iso_3166_1": "IN",
+      "release_dates": [
+        {
+          "certification": "",
+          "descriptors": [],
+          "iso_639_1": null,
+          "note": "Generic physical evidence; not a Blu-ray claim.",
+          "release_date": "2026-05-10T00:00:00.000Z",
+          "type": 5
+        }
+      ]
+    }
+  ]
+}

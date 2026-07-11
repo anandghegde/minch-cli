@@ -133,6 +133,41 @@ describe("DownloadManager", () => {
     }
   });
 
+  it("reserves distinct destinations for concurrent same-name downloads", async () => {
+    const bodyA = crypto.randomBytes(64 * 1024);
+    const bodyB = crypto.randomBytes(64 * 1024);
+    const serverA = await startServer(bodyA);
+    const serverB = await startServer(bodyB);
+    const manager = new DownloadManager(2);
+    const providerA = fakeProvider(serverA.url, "movie.mkv");
+    const providerB: DebridProvider = { ...fakeProvider(serverB.url, "movie.mkv"), id: "realdebrid" };
+    const tA = transfer([file("fa", "movie.mkv", bodyA.length)]);
+    const tB: Transfer = {
+      ...transfer([file("fb", "movie.mkv", bodyB.length)]),
+      provider: "realdebrid",
+      id: "t2",
+    };
+    try {
+      const idA = manager.start({ provider: providerA, transfer: tA, file: tA.files[0]!, dir });
+      const idB = manager.start({ provider: providerB, transfer: tB, file: tB.files[0]!, dir });
+      await until(() => !!manager.get(idA)?.dest && !!manager.get(idB)?.dest);
+
+      expect([manager.get(idA)?.dest, manager.get(idB)?.dest].sort()).toEqual([
+        path.join(dir, "movie (1).mkv"),
+        path.join(dir, "movie.mkv"),
+      ]);
+      await until(() => manager.get(idA)?.status === "done" && manager.get(idB)?.status === "done");
+      // URL resolution is concurrent, so either transfer may claim the base
+      // name first. Assert each entry owns its own bytes, not a race-dependent
+      // filename assignment.
+      expect(Buffer.compare(await fs.readFile(manager.get(idA)!.dest!), bodyA)).toBe(0);
+      expect(Buffer.compare(await fs.readFile(manager.get(idB)!.dest!), bodyB)).toBe(0);
+    } finally {
+      await serverA.close();
+      await serverB.close();
+    }
+  });
+
   it("notifies subscribers as state changes", async () => {
     const body = crypto.randomBytes(64 * 1024);
     const server = await startServer(body);

@@ -1,0 +1,953 @@
+import { createElement, useReducer } from "react";
+import { render } from "ink-testing-library";
+import { describe, expect, it, vi } from "vitest";
+import { defaultConfig, type Config } from "../src/config/config";
+import type { DiscoverySnapshot } from "../src/discovery/adapter";
+import { aggregateDiscoverySnapshots } from "../src/discovery/aggregate";
+import type { BudgetStatus, RequestLedger } from "../src/discovery/budget";
+import type { DiscoveryCacheDocument } from "../src/discovery/cache";
+import type { CatalogTitle, ReleaseEvent } from "../src/discovery/types";
+import {
+  DISCOVERY_SOURCE_CLAIM_NOTICE,
+  JUSTWATCH_ATTRIBUTION_NOTICE,
+  TMDB_REQUIRED_NOTICE,
+} from "../src/discovery/attribution";
+import {
+  DiscoveryContent,
+  discoveryLanguageSummary,
+  discoverySearchQuery,
+} from "../src/ui/components/Discover";
+import {
+  INITIAL_DISCOVERY_SCREEN_STATE,
+  DISCOVERY_LANGUAGE_FILTERS,
+  discoveryScreenReducer,
+  type DiscoveryScreenState,
+} from "../src/ui/discovery-state";
+import {
+  buildDiscoveryLoadTargets,
+  cachedSnapshotsForDiscoveryFeed,
+  discoveryDateSelection,
+  mergeDiscoveryProviders,
+  type DiscoveryUiModel,
+} from "../src/ui/hooks/useDiscovery";
+
+const NOW = Date.now();
+const RIGHT = "\x1b[C";
+const ESCAPE = "\x1b";
+
+function Harness({
+  uiModel,
+  initial = INITIAL_DISCOVERY_SCREEN_STATE,
+  cols = 100,
+  onSearch,
+}: {
+  uiModel: DiscoveryUiModel;
+  initial?: DiscoveryScreenState;
+  cols?: number;
+  onSearch?: (query: string) => void;
+}) {
+  const [screen, dispatch] = useReducer(discoveryScreenReducer, initial);
+  return createElement(DiscoveryContent, {
+    model: uiModel,
+    screen,
+    dispatch,
+    onSearch,
+    active: true,
+    cols,
+    listRows: 12,
+  });
+}
+
+function fixtureSnapshot(): DiscoverySnapshot {
+  const title: CatalogTitle = {
+    id: "streaming:title",
+    title: "Example Film",
+    year: 2026,
+    mediaType: "movie",
+    originalLanguage: "hi",
+    originCountries: ["IN"],
+    genreIds: [18],
+  };
+  const event: ReleaseEvent = {
+    id: "streaming:event",
+    titleId: title.id,
+    kind: "streaming_added",
+    region: "IN",
+    date: "2026-07-10",
+    datePrecision: "day",
+    providerId: "netflix",
+    providerLabel: "Netflix",
+    status: "today",
+    firstObservedAt: NOW,
+    lastObservedAt: NOW,
+    evidence: [{
+      source: "streaming-availability",
+      sourceId: "event",
+      observedAt: NOW,
+      confidence: "exact",
+    }],
+  };
+  return {
+    source: "streaming-availability",
+    feedKind: "streaming_added",
+    titles: [title],
+    events: [event],
+    fetchedAt: NOW,
+    warnings: [],
+  };
+}
+
+function model(overrides: Partial<DiscoveryUiModel> = {}): DiscoveryUiModel {
+  const snapshot = fixtureSnapshot();
+  return {
+    aggregation: aggregateDiscoverySnapshots([snapshot]),
+    sourceStates: [
+      {
+        key: "streaming:recent",
+        label: "Streaming Availability Recent",
+        state: {
+          source: "streaming-availability",
+          label: "Streaming Availability",
+          status: "stale",
+          snapshot,
+          warnings: [],
+        },
+      },
+      {
+        key: "streaming:quota",
+        label: "Streaming Availability Upcoming",
+        state: {
+          source: "streaming-availability",
+          label: "Streaming Availability",
+          status: "quota-paused",
+          warnings: [],
+        },
+      },
+    ],
+    loading: false,
+    done: 2,
+    total: 2,
+    providers: [],
+    attributions: [],
+    refresh: vi.fn(),
+    ...overrides,
+  };
+}
+
+describe("Discover canonical rows and source status", () => {
+  it("renders release fields and partial source states without torrent fields", () => {
+    const screen: DiscoveryScreenState = {
+      ...INITIAL_DISCOVERY_SCREEN_STATE,
+      feed: "ott",
+      dateWindow: "all",
+    };
+    const view = render(createElement(DiscoveryContent, {
+      model: model(),
+      screen,
+      dispatch: vi.fn(),
+      active: false,
+      cols: 120,
+      listRows: 12,
+    }));
+    const frame = view.lastFrame() ?? "";
+
+    expect(frame).toContain("2026-07-10");
+    expect(frame).toContain("Example Film (2026)");
+    expect(frame).toContain("Netflix");
+    expect(frame).toContain("Hindi");
+    expect(frame).toContain("Streaming");
+    expect(frame).toContain("stale");
+    expect(frame).toContain("quota-paused");
+    expect(frame).toContain("partial");
+    expect(frame).toContain("Partial results");
+    expect(frame.toLowerCase()).not.toMatch(/seeders|magnet|torrent size/);
+    expect(frame).not.toContain("GB");
+    view.unmount();
+  });
+
+  it("shows per-target loading progress", () => {
+    const view = render(createElement(DiscoveryContent, {
+      model: model({
+        aggregation: aggregateDiscoverySnapshots([]),
+        sourceStates: [],
+        loading: true,
+        done: 1,
+        total: 3,
+      }),
+      screen: INITIAL_DISCOVERY_SCREEN_STATE,
+      dispatch: vi.fn(),
+      active: false,
+      cols: 100,
+      listRows: 10,
+    }));
+
+    expect(view.lastFrame()).toContain("loading discovery 1/3");
+    view.unmount();
+  });
+
+  it("shows full evidence, attribution, and conflicting-date disclosure in details", () => {
+    const snapshot = fixtureSnapshot();
+    snapshot.titles[0] = {
+      ...snapshot.titles[0]!,
+      genreLabels: ["Drama"],
+    };
+    snapshot.events[0] = {
+      ...snapshot.events[0]!,
+      audioLanguages: ["hi", "ta"],
+      subtitleLanguages: ["en"],
+      evidence: [{
+        ...snapshot.events[0]!.evidence[0]!,
+        sourceUrl: "https://provider.example.test/title/1",
+      }],
+    };
+    snapshot.events.push({
+      ...snapshot.events[0]!,
+      id: "streaming:event-conflict",
+      date: "2026-07-09",
+    });
+    snapshot.attribution = {
+      source: "streaming-availability",
+      sourceLabel: "Streaming Availability",
+      sourceUrl: "https://www.movieofthenight.com/about/api",
+      notice: "Streaming availability data by Movie of the Night.",
+    };
+    const screen: DiscoveryScreenState = {
+      ...INITIAL_DISCOVERY_SCREEN_STATE,
+      feed: "ott",
+      dateWindow: "all",
+      detailsOpen: true,
+    };
+    const view = render(createElement(DiscoveryContent, {
+      model: model({
+        aggregation: aggregateDiscoverySnapshots([snapshot]),
+        attributions: [
+          snapshot.attribution,
+          {
+            source: "tmdb",
+            sourceLabel: "TMDB",
+            sourceUrl: "https://www.themoviedb.org",
+            notice: TMDB_REQUIRED_NOTICE,
+            additionalNotices: [JUSTWATCH_ATTRIBUTION_NOTICE],
+          },
+        ],
+      }),
+      screen,
+      dispatch: vi.fn(),
+      active: false,
+      cols: 120,
+      listRows: 16,
+    }));
+    const frame = view.lastFrame() ?? "";
+
+    expect(frame).toContain("Media: movie");
+    expect(frame).toContain("streaming added");
+    expect(frame).toContain("Netflix");
+    expect(frame).toContain("Hindi (hi)");
+    expect(frame).toContain("Origin countries: IN");
+    expect(frame).toContain("Genres: Drama");
+    expect(frame).toContain("Audio: Hindi, Tamil");
+    expect(frame).toContain("Subtitles: English");
+    expect(frame).toContain("Evidence: Streaming Availability exact");
+    expect(frame).toContain("https://provider.example.test/title/1");
+    expect(frame).toContain("Attribution: Streaming availability data by Movie of the Night.");
+    expect(frame).toContain("Attribution: This product uses the TMDB API");
+    expect(frame).toContain(JUSTWATCH_ATTRIBUTION_NOTICE);
+    expect(frame).toContain(DISCOVERY_SOURCE_CLAIM_NOTICE);
+    expect(frame).toContain("Sources disagree on the event date");
+    view.unmount();
+  });
+
+  it("hands off only the clean title and year on s", async () => {
+    const onSearch = vi.fn();
+    const screen: DiscoveryScreenState = {
+      ...INITIAL_DISCOVERY_SCREEN_STATE,
+      feed: "ott",
+      dateWindow: "all",
+    };
+    const view = render(createElement(DiscoveryContent, {
+      model: model(),
+      screen,
+      dispatch: vi.fn(),
+      onSearch,
+      active: true,
+      cols: 100,
+      listRows: 10,
+    }));
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    view.stdin.write("s");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(onSearch).toHaveBeenCalledWith("Example Film 2026");
+    expect(onSearch.mock.calls[0]![0]).not.toMatch(/Netflix|Blu-ray|Hindi/);
+    expect(discoverySearchQuery(model().aggregation.feeds.ott[0]!)).toBe(
+      "Example Film 2026",
+    );
+    view.unmount();
+  });
+
+  it("distinguishes filtered-empty results from an empty source window", () => {
+    const filtered = render(createElement(DiscoveryContent, {
+      model: model(),
+      screen: {
+        ...INITIAL_DISCOVERY_SCREEN_STATE,
+        feed: "ott",
+        dateWindow: "all",
+        media: "series",
+      },
+      dispatch: vi.fn(),
+      active: false,
+      cols: 110,
+      listRows: 10,
+    }));
+    expect(filtered.lastFrame()).toContain("Filters removed all discovery rows");
+    filtered.unmount();
+
+    const emptySnapshot: DiscoverySnapshot = {
+      source: "bluray",
+      feedKind: "bluray",
+      titles: [],
+      events: [],
+      fetchedAt: NOW,
+      warnings: [],
+    };
+    const noEvents = render(createElement(DiscoveryContent, {
+      model: model({
+        aggregation: aggregateDiscoverySnapshots([emptySnapshot]),
+        sourceStates: [{
+          key: "bluray:rss",
+          label: "Blu-ray.com RSS",
+          state: {
+            source: "bluray",
+            label: "Blu-ray.com RSS",
+            status: "ready",
+            snapshot: emptySnapshot,
+            warnings: [],
+          },
+        }],
+      }),
+      screen: { ...INITIAL_DISCOVERY_SCREEN_STATE, feed: "bluray" },
+      dispatch: vi.fn(),
+      active: false,
+      cols: 110,
+      listRows: 10,
+    }));
+    expect(noEvents.lastFrame()).toContain("No recent discovery events were reported");
+    noEvents.unmount();
+  });
+
+  it("distinguishes unconfigured guidance from offline with no cache", () => {
+    const unconfigured = render(createElement(DiscoveryContent, {
+      model: model({
+        aggregation: aggregateDiscoverySnapshots([]),
+        sourceStates: [
+          {
+            key: "tmdb:trending",
+            label: "TMDB Trending",
+            state: {
+              source: "tmdb",
+              label: "TMDB",
+              status: "unconfigured",
+              warnings: [],
+            },
+          },
+          {
+            key: "streaming:recent",
+            label: "Streaming Availability Recent",
+            state: {
+              source: "streaming-availability",
+              label: "Streaming Availability",
+              status: "unconfigured",
+              warnings: [],
+            },
+          },
+        ],
+      }),
+      screen: INITIAL_DISCOVERY_SCREEN_STATE,
+      dispatch: vi.fn(),
+      active: false,
+      cols: 120,
+      listRows: 12,
+    }));
+    const unconfiguredFrame = unconfigured.lastFrame() ?? "";
+    expect(unconfiguredFrame).toContain("This discovery feed is unconfigured");
+    expect(unconfiguredFrame).toContain("TMDB_READ_TOKEN");
+    expect(unconfiguredFrame).toContain("Settings → TMDB read token");
+    expect(unconfiguredFrame).toContain("STREAMING_AVAILABILITY_API_KEY");
+    expect(unconfiguredFrame).toContain("Settings → Streaming Availability key");
+    expect(unconfiguredFrame).toContain("Blu-ray remains available without credentials");
+    unconfigured.unmount();
+
+    const offline = render(createElement(DiscoveryContent, {
+      model: model({
+        aggregation: aggregateDiscoverySnapshots([]),
+        sourceStates: [
+          {
+            key: "bluray:rss",
+            label: "Blu-ray.com RSS",
+            state: {
+              source: "bluray",
+              label: "Blu-ray.com RSS",
+              status: "failed",
+              warnings: [],
+              error: new Error("offline"),
+            },
+          },
+          {
+            key: "tmdb:physical",
+            label: "TMDB Physical",
+            state: {
+              source: "tmdb",
+              label: "TMDB",
+              status: "failed",
+              warnings: [],
+              error: new Error("offline"),
+            },
+          },
+        ],
+      }),
+      screen: { ...INITIAL_DISCOVERY_SCREEN_STATE, feed: "bluray" },
+      dispatch: vi.fn(),
+      active: false,
+      cols: 100,
+      listRows: 10,
+    }));
+    expect(offline.lastFrame()).toContain("offline or unavailable");
+    expect(offline.lastFrame()).toContain("no cached discovery data");
+    expect(offline.lastFrame()).toContain("Results unavailable or incomplete");
+    expect(offline.lastFrame()).not.toContain("0 results");
+    offline.unmount();
+  });
+
+  it("qualifies empty partial and quota-paused feeds instead of claiming zero releases", () => {
+    const emptySnapshot: DiscoverySnapshot = {
+      source: "tmdb",
+      feedKind: "physical",
+      titles: [],
+      events: [],
+      fetchedAt: NOW,
+      warnings: [],
+    };
+    const partial = render(createElement(DiscoveryContent, {
+      model: model({
+        aggregation: aggregateDiscoverySnapshots([emptySnapshot]),
+        sourceStates: [
+          {
+            key: "tmdb:physical",
+            label: "TMDB Physical",
+            state: {
+              source: "tmdb",
+              label: "TMDB",
+              status: "ready",
+              snapshot: emptySnapshot,
+              warnings: [],
+            },
+          },
+          {
+            key: "bluray:rss",
+            label: "Blu-ray.com RSS",
+            state: {
+              source: "bluray",
+              label: "Blu-ray.com RSS",
+              status: "failed",
+              warnings: [],
+              error: new Error("offline"),
+            },
+          },
+        ],
+      }),
+      screen: { ...INITIAL_DISCOVERY_SCREEN_STATE, feed: "bluray" },
+      dispatch: vi.fn(),
+      active: false,
+      cols: 120,
+      listRows: 12,
+    }));
+    const partialFrame = partial.lastFrame() ?? "";
+    expect(partialFrame).toContain("Available sources reported no events");
+    expect(partialFrame).toContain("result incomplete");
+    expect(partialFrame).toContain("Results unavailable or incomplete");
+    expect(partialFrame).not.toContain("0 results");
+    partial.unmount();
+
+    const quota = render(createElement(DiscoveryContent, {
+      model: model({
+        aggregation: aggregateDiscoverySnapshots([]),
+        sourceStates: [{
+          key: "streaming:recent",
+          label: "Streaming Availability Recent",
+          state: {
+            source: "streaming-availability",
+            label: "Streaming Availability",
+            status: "quota-paused",
+            warnings: [],
+          },
+        }],
+      }),
+      screen: {
+        ...INITIAL_DISCOVERY_SCREEN_STATE,
+        feed: "ott",
+        dateWindow: "all",
+      },
+      dispatch: vi.fn(),
+      active: false,
+      cols: 120,
+      listRows: 12,
+    }));
+    const quotaFrame = quota.lastFrame() ?? "";
+    expect(quotaFrame).toContain("request quota is paused");
+    expect(quotaFrame).toContain("no cached discovery data");
+    expect(quotaFrame).not.toContain("0 results");
+    quota.unmount();
+  });
+
+  it("shows an explicit disabled-adapter state without credential guidance", () => {
+    const view = render(createElement(DiscoveryContent, {
+      model: model({
+        aggregation: aggregateDiscoverySnapshots([]),
+        sourceStates: [{
+          key: "bluray:rss",
+          label: "Blu-ray.com RSS",
+          state: {
+            source: "bluray",
+            label: "Blu-ray.com RSS",
+            status: "disabled",
+            warnings: [],
+          },
+        }],
+      }),
+      screen: { ...INITIAL_DISCOVERY_SCREEN_STATE, feed: "bluray" },
+      dispatch: vi.fn(),
+      active: false,
+      cols: 110,
+      listRows: 10,
+    }));
+    const frame = view.lastFrame() ?? "";
+
+    expect(frame).toContain("disabled in Settings");
+    expect(frame).toContain("Results unavailable or incomplete");
+    expect(frame).not.toContain("TMDB_READ_TOKEN");
+    expect(frame).not.toContain("STREAMING_AVAILABILITY_API_KEY");
+    view.unmount();
+  });
+});
+
+describe("Discover bounded load planning", () => {
+  function ledger() {
+    const status: BudgetStatus = {
+      source: "streaming-availability",
+      endpoint: "changes",
+      month: "2026-07",
+      used: 0,
+      endpointUsed: 0,
+      allowed: true,
+      warning: false,
+      softWarning: 350,
+      hardCap: 450,
+      remaining: 450,
+    };
+    return {
+      recordAttempt: vi.fn<Pick<RequestLedger, "recordAttempt">["recordAttempt"]>(
+        async () => status,
+      ),
+      canSpend: vi.fn<Pick<RequestLedger, "canSpend">["canSpend"]>(async () => status),
+    };
+  }
+
+  it("plans only the adapters needed for each feed and date direction", () => {
+    const india = buildDiscoveryLoadTargets(
+      defaultConfig,
+      "india",
+      "30d",
+      ledger(),
+      "2026-07-10",
+    );
+    expect(india.map((target) => target.key)).toEqual([
+      "streaming-availability:added",
+      "streaming-availability:providers",
+      "tmdb:digital",
+      "tmdb:physical",
+    ]);
+    expect(india[0]!.request.dateRange).toEqual({
+      start: "2026-06-11",
+      end: "2026-07-10",
+      direction: "past",
+    });
+    expect(india[0]!.request.pageLimit).toBe(4);
+
+    const upcoming = buildDiscoveryLoadTargets(
+      defaultConfig,
+      "ott",
+      "upcoming-7d",
+      ledger(),
+      "2026-07-10",
+    );
+    expect(upcoming).toHaveLength(2);
+    expect(upcoming[0]!.request).toMatchObject({
+      feedKind: "streaming_upcoming",
+      dateRange: { start: "2026-07-10", end: "2026-07-16", direction: "upcoming" },
+      pageLimit: 1,
+    });
+    expect(upcoming[0]!.request.providerIds.length).toBeGreaterThan(0);
+    expect(upcoming[1]!.request.feedKind).toBe("provider_dictionary");
+
+    expect(buildDiscoveryLoadTargets(defaultConfig, "bluray", "30d", ledger()))
+      .toHaveLength(2);
+    expect(discoveryDateSelection("7d", "2026-07-10")).toEqual({
+      direction: "past",
+      range: { start: "2026-07-04", end: "2026-07-10" },
+    });
+    expect(discoveryDateSelection("upcoming-30d", "2026-07-10")).toEqual({
+      direction: "upcoming",
+      range: { start: "2026-07-10", end: "2026-08-08" },
+    });
+    expect(discoveryDateSelection("all", "2026-07-10")).toEqual({ direction: "past" });
+  });
+
+  it("merges rebrand aliases by normalized ID and preserves unknown providers", () => {
+    expect(mergeDiscoveryProviders([
+      { id: "hotstar", label: "Hotstar", upstreamAliases: ["hotstar"] },
+      { id: "hotstar", label: "JioHotstar", upstreamAliases: ["hotstar", "JioHotstar"] },
+      { id: "localflix", label: "LocalFlix", upstreamAliases: ["localflix"] },
+    ])).toEqual([
+      {
+        id: "hotstar",
+        label: "JioHotstar",
+        upstreamAliases: ["hotstar", "JioHotstar"],
+      },
+      { id: "localflix", label: "LocalFlix", upstreamAliases: ["localflix"] },
+    ]);
+  });
+
+  it("keeps the documented language order and labels additional audio separately", () => {
+    expect(DISCOVERY_LANGUAGE_FILTERS.map((choice) => choice.label)).toEqual([
+      "All languages",
+      "Hindi",
+      "Kannada",
+      "Tamil",
+      "Telugu",
+      "Malayalam",
+      "Bengali",
+      "Marathi",
+      "Punjabi",
+      "Gujarati",
+      "English",
+      "Other",
+    ]);
+    const entry = model().aggregation.feeds.ott[0]!;
+    expect(discoveryLanguageSummary({
+      ...entry,
+      event: { ...entry.event!, audioLanguages: ["hi", "ta"] },
+    })).toBe("Hindi · audio Tamil");
+  });
+
+  it("selects every retained cache snapshot relevant to All cached", () => {
+    const recent = fixtureSnapshot();
+    const upcoming = {
+      ...fixtureSnapshot(),
+      feedKind: "streaming_upcoming" as const,
+      fetchedAt: NOW + 1,
+    };
+    const bluray = {
+      ...fixtureSnapshot(),
+      source: "bluray" as const,
+      feedKind: "bluray" as const,
+      fetchedAt: NOW + 2,
+    };
+    const requestBase = {
+      region: "IN",
+      mediaTypes: ["movie" as const],
+      providerIds: [],
+      pageLimit: 1,
+    };
+    const document: DiscoveryCacheDocument = {
+      version: 1,
+      entries: {
+        recent: {
+          source: "streaming-availability",
+          request: { ...requestBase, feedKind: "streaming_added" },
+          snapshot: recent,
+          expiresAt: NOW + 1,
+          staleUntil: NOW + 10_000,
+        },
+        upcoming: {
+          source: "streaming-availability",
+          request: { ...requestBase, feedKind: "streaming_upcoming" },
+          snapshot: upcoming,
+          expiresAt: NOW + 1,
+          staleUntil: NOW + 10_000,
+        },
+        bluray: {
+          source: "bluray",
+          request: { ...requestBase, region: "ZZ", feedKind: "bluray" },
+          snapshot: bluray,
+          expiresAt: NOW + 1,
+          staleUntil: NOW + 10_000,
+        },
+        expired: {
+          source: "streaming-availability",
+          request: { ...requestBase, feedKind: "streaming_added" },
+          snapshot: { ...recent, fetchedAt: NOW - 10_000 },
+          expiresAt: NOW - 2,
+          staleUntil: NOW - 1,
+        },
+      },
+    };
+
+    expect(cachedSnapshotsForDiscoveryFeed(document, "ott", NOW)
+      .map((snapshot) => snapshot.feedKind)).toEqual([
+      "streaming_added",
+      "streaming_upcoming",
+    ]);
+    expect(cachedSnapshotsForDiscoveryFeed(document, "india", NOW)
+      .some((snapshot) => snapshot.source === "bluray")).toBe(false);
+    expect(cachedSnapshotsForDiscoveryFeed(document, "bluray", NOW)
+      .map((snapshot) => snapshot.source)).toEqual(["bluray"]);
+    expect(cachedSnapshotsForDiscoveryFeed(document, "bluray", NOW, ["bluray"]))
+      .toEqual([]);
+  });
+
+  it("marks explicitly disabled load targets unconfigured even when keys exist", () => {
+    const configured: Config = {
+      ...defaultConfig,
+      discovery: {
+        tmdb: { readToken: "tmdb-token" },
+        streamingAvailability: { apiKey: "streaming-key" },
+        disabledSources: ["tmdb", "bluray", "streaming-availability"],
+      },
+    };
+    const targets = [
+      ...buildDiscoveryLoadTargets(configured, "india", "7d", ledger(), "2026-07-10"),
+      ...buildDiscoveryLoadTargets(configured, "bluray", "7d", ledger(), "2026-07-10"),
+    ];
+
+    expect(targets.every((target) => !target.adapter.isConfigured())).toBe(true);
+  });
+});
+
+describe("Discover interactions", () => {
+  it("switches feed, media type, and date window through the live reducer", async () => {
+    const view = render(createElement(Harness, { uiModel: model() }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    view.stdin.write(RIGHT);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(view.lastFrame()).toContain("[OTT]");
+    view.stdin.write("m");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(view.lastFrame()).toContain("Movies");
+    view.stdin.write("t");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(view.lastFrame()).toContain("Upcoming 7d");
+    view.unmount();
+  });
+
+  it("cycles live and unknown provider choices without fragmenting IDs", async () => {
+    const uiModel = model({
+      providers: [
+        { id: "netflix", label: "Netflix", upstreamAliases: ["netflix"] },
+        { id: "localflix", label: "LocalFlix", upstreamAliases: ["localflix"] },
+      ],
+    });
+    const initial: DiscoveryScreenState = {
+      ...INITIAL_DISCOVERY_SCREEN_STATE,
+      feed: "ott",
+      dateWindow: "all",
+    };
+    const view = render(createElement(Harness, { uiModel, initial }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    view.stdin.write("p");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(view.lastFrame()).toContain("Netflix");
+    expect(view.lastFrame()).toContain("Example Film");
+    view.stdin.write("p");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(view.lastFrame()).toContain("LocalFlix");
+    expect(view.lastFrame()).toContain("Filters removed all discovery rows");
+    view.unmount();
+  });
+
+  it("cycles ordered language filters while keeping original language primary", async () => {
+    const initial: DiscoveryScreenState = {
+      ...INITIAL_DISCOVERY_SCREEN_STATE,
+      feed: "ott",
+      dateWindow: "all",
+    };
+    const view = render(createElement(Harness, { uiModel: model(), initial }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    view.stdin.write("l");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(view.lastFrame()).toContain("Hindi");
+    expect(view.lastFrame()).toContain("Example Film");
+    view.unmount();
+  });
+
+  it("defaults India to regional availability and narrows to Indian origin on i", async () => {
+    const streaming = fixtureSnapshot();
+    const globalTitle: CatalogTitle = {
+      ...streaming.titles[0]!,
+      id: "streaming:global",
+      title: "Global Title in India",
+      originCountries: ["US"],
+      tmdbId: 2,
+    };
+    streaming.titles[0] = { ...streaming.titles[0]!, tmdbId: 1 };
+    streaming.titles.push(globalTitle);
+    streaming.events.push({
+      ...streaming.events[0]!,
+      id: "streaming:global-event",
+      titleId: globalTitle.id,
+    });
+    const digitalTitle: CatalogTitle = {
+      ...streaming.titles[0]!,
+      id: "tmdb:digital",
+      title: "Indian Digital",
+      tmdbId: 3,
+    };
+    const physicalTitle: CatalogTitle = {
+      ...digitalTitle,
+      id: "tmdb:physical",
+      title: "Indian Physical",
+      tmdbId: 4,
+    };
+    const regional: DiscoverySnapshot = {
+      source: "tmdb",
+      feedKind: "digital",
+      titles: [digitalTitle, physicalTitle],
+      events: [
+        {
+          ...streaming.events[0]!,
+          id: "tmdb:digital-event",
+          titleId: digitalTitle.id,
+          kind: "digital",
+          providerId: undefined,
+          providerLabel: undefined,
+          formatLabel: "Digital",
+          evidence: [{ source: "tmdb", observedAt: NOW, confidence: "exact" }],
+        },
+        {
+          ...streaming.events[0]!,
+          id: "tmdb:physical-event",
+          titleId: physicalTitle.id,
+          kind: "physical",
+          providerId: undefined,
+          providerLabel: undefined,
+          formatLabel: "Physical",
+          evidence: [{ source: "tmdb", observedAt: NOW, confidence: "exact" }],
+        },
+      ],
+      fetchedAt: NOW,
+      warnings: [],
+    };
+    const discTitle: CatalogTitle = {
+      ...digitalTitle,
+      id: "bluray:indian",
+      title: "Unknown Region Indian Disc",
+      tmdbId: 5,
+    };
+    const bluray: DiscoverySnapshot = {
+      source: "bluray",
+      feedKind: "bluray",
+      titles: [discTitle],
+      events: [{
+        ...streaming.events[0]!,
+        id: "bluray:event",
+        titleId: discTitle.id,
+        kind: "bluray",
+        region: "ZZ",
+        providerId: undefined,
+        providerLabel: undefined,
+        formatLabel: "Blu-ray",
+        evidence: [{ source: "bluray", observedAt: NOW, confidence: "source_claim" }],
+      }],
+      fetchedAt: NOW,
+      warnings: [],
+    };
+    const uiModel = model({
+      aggregation: aggregateDiscoverySnapshots([streaming, regional, bluray]),
+      sourceStates: [],
+    });
+    const initial: DiscoveryScreenState = {
+      ...INITIAL_DISCOVERY_SCREEN_STATE,
+      feed: "india",
+      dateWindow: "all",
+    };
+    const view = render(createElement(Harness, { uiModel, initial }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const availableFrame = view.lastFrame() ?? "";
+
+    expect(availableFrame).toContain("Available in India");
+    expect(availableFrame).toContain("Global Title in India");
+    expect(availableFrame).toContain("Digital");
+    expect(availableFrame).toContain("Physical");
+    expect(availableFrame).not.toContain("Unknown Region Indian Disc");
+
+    view.stdin.write("i");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(view.lastFrame()).toContain("Indian titles only");
+    expect(view.lastFrame()).not.toContain("Global Title in India");
+    expect(view.lastFrame()).toContain("Example Film");
+    view.unmount();
+  });
+
+  it("opens and closes details from the selected row", async () => {
+    const initial: DiscoveryScreenState = {
+      ...INITIAL_DISCOVERY_SCREEN_STATE,
+      feed: "ott",
+      dateWindow: "all",
+    };
+    const view = render(createElement(Harness, { uiModel: model(), initial }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    view.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(view.lastFrame()).toContain("Media: movie");
+    view.stdin.write(ESCAPE);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(view.lastFrame()).toContain("Example Film (2026)");
+    expect(view.lastFrame()).not.toContain("Media: movie");
+    view.unmount();
+  });
+
+  it("drops optional language/source columns on narrow terminals", () => {
+    const screen: DiscoveryScreenState = {
+      ...INITIAL_DISCOVERY_SCREEN_STATE,
+      feed: "ott",
+      dateWindow: "all",
+    };
+    const view = render(createElement(DiscoveryContent, {
+      model: model({ sourceStates: [] }),
+      screen,
+      dispatch: vi.fn(),
+      active: false,
+      cols: 60,
+      listRows: 8,
+    }));
+    const frame = view.lastFrame() ?? "";
+
+    expect(frame).toContain("Example Film");
+    expect(frame).toContain("Netflix");
+    expect(frame).not.toContain("Hindi");
+    expect(frame).not.toContain("Streaming Avai");
+    view.unmount();
+  });
+
+  it("ignores torrent-only copy/open/debrid keys", async () => {
+    const uiModel = model();
+    const onSearch = vi.fn();
+    const initial: DiscoveryScreenState = {
+      ...INITIAL_DISCOVERY_SCREEN_STATE,
+      feed: "ott",
+      dateWindow: "all",
+    };
+    const view = render(createElement(Harness, { uiModel, initial, onSearch }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    view.stdin.write("yob");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(onSearch).not.toHaveBeenCalled();
+    expect(uiModel.refresh).not.toHaveBeenCalled();
+    expect(view.lastFrame()).toContain("Example Film (2026)");
+    view.unmount();
+  });
+});
