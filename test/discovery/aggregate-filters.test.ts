@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  entryImdbRating,
   filterDiscoveryEntries,
   matchesYearFilter,
   type DiscoveryFeedEntry,
 } from "../../src/discovery/aggregate";
-import type { CatalogTitle, ReleaseEvent } from "../../src/discovery/types";
+import type {
+  CatalogRating,
+  CatalogTitle,
+  ReleaseEvent,
+} from "../../src/discovery/types";
 
 function title(
   id: string,
@@ -185,5 +190,69 @@ describe("filterDiscoveryEntries year filter", () => {
       filterDiscoveryEntries(yearEntries, {})
         .map((entry) => entry.title?.id),
     ).toEqual(["y2026", "y2021", "y1975", "no-year"]);
+  });
+});
+
+function imdb(value: number, voteCount?: number): CatalogRating {
+  return {
+    system: "imdb",
+    provider: "imdb-dataset",
+    value,
+    scale: 10,
+    ...(voteCount !== undefined ? { voteCount } : {}),
+    observedAt: 1,
+  };
+}
+
+describe("discovery IMDb threshold filters", () => {
+  it("prefers ratings map over title.ratings and ignores non-IMDb systems for thresholds", () => {
+    const entry: DiscoveryFeedEntry = {
+      title: title("t1", {
+        ratings: [imdb(5, 100)],
+      }),
+    };
+    const map = new Map<string, CatalogRating[]>([
+      ["t1", [imdb(8.2, 12_000)]],
+    ]);
+    expect(entryImdbRating(entry, map)?.value).toBe(8.2);
+    expect(entryImdbRating(entry, new Map())?.value).toBe(5);
+
+    const tmdbOnly: DiscoveryFeedEntry = {
+      title: title("tmdb", {
+        ratings: [{
+          system: "tmdb",
+          provider: "tmdb",
+          value: 90,
+          scale: 100,
+          voteCount: 99999,
+          observedAt: 1,
+        }],
+      }),
+    };
+    expect(entryImdbRating(tmdbOnly, new Map())).toBeUndefined();
+  });
+
+  it("excludes rows below min rating or votes and rows missing IMDb when thresholds active", () => {
+    const high = {
+      title: title("high", { ratings: [imdb(8.1, 20_000)] }),
+    };
+    const mid = {
+      title: title("mid", { ratings: [imdb(6.5, 2_000)] }),
+    };
+    const lowVotes = {
+      title: title("lowv", { ratings: [imdb(9.0, 100)] }),
+    };
+    const none = { title: title("none") };
+    const rows = [high, mid, lowVotes, none];
+    const emptyMap = new Map<string, CatalogRating[]>();
+
+    expect(filterDiscoveryEntries(rows, { minImdbRating: 7 }, emptyMap)
+      .map((e) => e.title?.id)).toEqual(["high", "lowv"]);
+    expect(filterDiscoveryEntries(rows, { minImdbVotes: 1000 }, emptyMap)
+      .map((e) => e.title?.id)).toEqual(["high", "mid"]);
+    expect(filterDiscoveryEntries(rows, {
+      minImdbRating: 7,
+      minImdbVotes: 1000,
+    }, emptyMap).map((e) => e.title?.id)).toEqual(["high"]);
   });
 });

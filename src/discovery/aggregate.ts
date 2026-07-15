@@ -6,6 +6,7 @@ import {
   normalizeLanguage,
 } from "./normalize";
 import type {
+  CatalogRating,
   CatalogTitle,
   DiscoverySource,
   EvidenceConfidence,
@@ -13,7 +14,11 @@ import type {
   ReleaseEvent,
   SourceEvidence,
 } from "./types";
-import { mergeRatings } from "./ratings/types";
+import {
+  formatRatingValue,
+  mergeRatings,
+  selectPreferredRating,
+} from "./ratings/types";
 
 export interface CanonicalIdentityDiagnostics {
   /** Ambiguous external-ID or title/year buckets deliberately left separate. */
@@ -545,10 +550,27 @@ export function matchesYearFilter(
   return true;
 }
 
+export type DiscoveryRatingsMap = ReadonlyMap<string, readonly CatalogRating[]>;
+
+/** IMDb-only rating for filters/sorts; map wins over title.ratings. */
+export function entryImdbRating(
+  entry: DiscoveryFeedEntry,
+  ratingsByTitleId: DiscoveryRatingsMap = new Map(),
+): CatalogRating | undefined {
+  const titleId = entry.title?.id;
+  const fromMap = titleId ? ratingsByTitleId.get(titleId) : undefined;
+  const pool = [
+    ...(fromMap ?? []),
+    ...(entry.title?.ratings ?? []),
+  ].filter((rating) => rating.system === "imdb");
+  return selectPreferredRating(pool);
+}
+
 /** Apply hard feed filters only; ranking is a separate deterministic step. */
 export function filterDiscoveryEntries(
   entries: readonly DiscoveryFeedEntry[],
   filters: DiscoveryFeedFilters,
+  ratingsByTitleId: DiscoveryRatingsMap = new Map(),
 ): DiscoveryFeedEntry[] {
   const mediaTypes = new Set(filters.mediaTypes ?? []);
   const providerIds = new Set(filters.providerIds ?? []);
@@ -605,6 +627,22 @@ export function filterDiscoveryEntries(
     }
     if (filters.indianTitlesOnly && !entry.title?.originCountries.includes("IN")) return false;
     if (!matchesYearFilter(entry.title?.year, filters.yearFilter)) return false;
+    if (filters.minImdbRating !== undefined || filters.minImdbVotes !== undefined) {
+      const rating = entryImdbRating(entry, ratingsByTitleId);
+      if (!rating) return false;
+      const score = formatRatingValue(rating);
+      if (
+        filters.minImdbRating !== undefined &&
+        score < filters.minImdbRating
+      ) {
+        return false;
+      }
+      if (filters.minImdbVotes !== undefined) {
+        if (rating.voteCount === undefined || rating.voteCount < filters.minImdbVotes) {
+          return false;
+        }
+      }
+    }
     return true;
   });
 }
