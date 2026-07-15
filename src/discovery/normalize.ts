@@ -13,8 +13,11 @@ export interface NormalizedProvider {
 
 const PROVIDERS: readonly ProviderDescriptor[] = [
   { id: "netflix", label: "Netflix", aliases: ["netflix"] },
-  { id: "prime", label: "Prime Video", aliases: ["prime", "prime video", "amazon prime video"] },
+  { id: "prime", label: "Prime Video", aliases: ["prime", "prime video", "amazon prime", "amazon prime video"] },
   { id: "apple", label: "Apple TV", aliases: ["apple", "apple tv", "apple tv+"] },
+  { id: "disney", label: "Disney+", aliases: ["disney", "disney+"] },
+  { id: "hbo", label: "Max", aliases: ["hbo", "hbo max", "max"] },
+  { id: "paramount", label: "Paramount+", aliases: ["paramount", "paramount+"] },
   { id: "hotstar", label: "JioHotstar", aliases: ["hotstar", "jiohotstar", "jio hotstar", "disney+ hotstar"] },
   { id: "zee5", label: "Zee5", aliases: ["zee5", "zee 5"] },
   { id: "sonyliv", label: "SonyLiv", aliases: ["sonyliv", "sony liv"] },

@@ -58,9 +58,13 @@ import { useConfig } from "./hooks/useConfig";
 import { DownloadProvider } from "./download-store";
 import { listRowsForTerminal } from "./layout";
 import { COLOR } from "./theme";
+import { logError, logEvent, registerLogSecrets } from "../util/logger";
 import {
   withStreamingAvailabilityApiKey,
   withTmdbReadToken,
+  withMdblistApiKey,
+  withApifyApiToken,
+  withFirecrawlApiKey,
 } from "../discovery/config";
 
 export const TAB_ORDER: View[] = ["search", "trending", "realdebrid", "torbox", "sources", "settings"];
@@ -108,8 +112,13 @@ export function App({
   });
   useEffect(() => {
     if (!stdout) return;
-    const onResize = (): void =>
+    const onResize = (): void => {
+      logEvent("info", "ui.terminal.resized", {
+        rows: stdout.rows ?? 24,
+        cols: stdout.columns ?? 80,
+      });
       setSize({ rows: stdout.rows ?? 24, cols: stdout.columns ?? 80 });
+    };
     stdout.on("resize", onResize);
     return () => {
       stdout.off("resize", onResize);
@@ -138,13 +147,27 @@ export function App({
     booting.current = true;
     let alive = true;
     void (async () => {
+      logEvent("info", "app.boot.started");
       const cfg = await loadConfig();
+      registerLogSecrets([
+        cfg.discovery?.tmdb?.readToken,
+        cfg.discovery?.streamingAvailability?.apiKey,
+        cfg.discovery?.apify?.apiToken,
+        cfg.discovery?.mdblist?.apiKey,
+        cfg.debrid?.torbox?.apiKey,
+        cfg.debrid?.realdebrid?.token,
+      ]);
       const configWarnings = takeConfigWarnings();
       const configWarning = configWarnings.length > 0
         ? `${configWarnings[0]}${configWarnings.length > 1 ? ` (+${configWarnings.length - 1} more)` : ""}`
         : null;
       const reg = await buildRegistry(cfg);
       if (!alive) return;
+      logEvent("info", "app.boot.ready", {
+        firstRunDone: cfg.firstRunDone,
+        sourceCount: reg.sources.length,
+        configWarningCount: configWarnings.length,
+      });
       setRegistry(reg);
 
       if (cfg.firstRunDone) {
@@ -189,7 +212,10 @@ export function App({
         if (configWarning) setNotice(configWarning);
         if (initialQuery?.trim()) setSubmittedQuery(initialQuery.trim());
       }, 700);
-    })();
+    })().catch((error: unknown) => {
+      logError("app.boot.failed", error);
+      throw error;
+    });
     return () => {
       alive = false;
     };
@@ -388,6 +414,29 @@ export function App({
     [manager],
   );
 
+  const copyDownloadLink = useCallback((transfer: Transfer, file: TransferFile) => {
+    void (async () => {
+      const cfg = configRef.current;
+      if (!cfg) return;
+      const provider = getProvider(transfer.provider, cfg);
+      if (!provider || !provider.isConfigured()) {
+        setNotice(`Add a ${PROVIDER_LABELS[transfer.provider]} key in Accounts (press a).`);
+        return;
+      }
+      try {
+        const resolved = await provider.resolveFileUrl(transfer.id, file.id);
+        const copied = await writeClipboard(resolved.url);
+        setNotice(
+          copied
+            ? `Copied download link: ${truncate(cleanText(file.name), 40)}`
+            : "Couldn't copy download link to clipboard.",
+        );
+      } catch (error) {
+        setNotice(debridNotice(error, PROVIDER_LABELS[transfer.provider]));
+      }
+    })();
+  }, []);
+
   const cancelDownload = useCallback(
     (id: string) => {
       manager.cancel(id);
@@ -445,6 +494,7 @@ export function App({
     (id: DebridId, key: string | undefined) => {
       const cfg = configRef.current;
       if (!cfg) return;
+      registerLogSecrets([key]);
       updateConfig((current) => withDebridKey(current, id, key));
       // Reset any stale auth result so the user re-verifies the new key.
       setDebridAuth((s) => ({ ...s, [id]: { checking: false } }));
@@ -455,15 +505,35 @@ export function App({
   );
 
   const saveTmdbToken = useCallback((token: string | undefined) => {
+    registerLogSecrets([token]);
     updateConfig((current) => withTmdbReadToken(current, token));
     setNotice(token ? "Saved TMDB read token." : "Cleared TMDB read token.");
   }, [updateConfig]);
 
   const saveStreamingAvailabilityKey = useCallback((key: string | undefined) => {
+    registerLogSecrets([key]);
     updateConfig((current) => withStreamingAvailabilityApiKey(current, key));
     setNotice(key
       ? "Saved Streaming Availability API key."
       : "Cleared Streaming Availability API key.");
+  }, [updateConfig]);
+
+  const saveMdblistKey = useCallback((key: string | undefined) => {
+    registerLogSecrets([key]);
+    updateConfig((current) => withMdblistApiKey(current, key));
+    setNotice(key ? "Saved MDBList API key." : "Cleared MDBList API key.");
+  }, [updateConfig]);
+
+  const saveApifyToken = useCallback((token: string | undefined) => {
+    registerLogSecrets([token]);
+    updateConfig((current) => withApifyApiToken(current, token));
+    setNotice(token ? "Saved Apify API token." : "Cleared Apify API token.");
+  }, [updateConfig]);
+
+  const saveFirecrawlKey = useCallback((key: string | undefined) => {
+    registerLogSecrets([key]);
+    updateConfig((current) => withFirecrawlApiKey(current, key));
+    setNotice(key ? "Saved Firecrawl API key." : "Cleared Firecrawl API key.");
   }, [updateConfig]);
 
   const copyMagnet = useCallback(
@@ -511,6 +581,10 @@ export function App({
     const t = setTimeout(() => setNotice(null), 4000);
     return () => clearTimeout(t);
   }, [notice]);
+
+  useEffect(() => {
+    logEvent("info", "ui.view.changed", { view, editing });
+  }, [editing, view]);
 
   const rows = size.rows;
   const cols = size.cols;
@@ -570,6 +644,9 @@ export function App({
       saveDebridKey,
       saveTmdbToken,
       saveStreamingAvailabilityKey,
+      saveApifyToken,
+      saveFirecrawlKey,
+      saveMdblistKey,
       quitAll,
       cols,
       rows,
@@ -586,7 +663,7 @@ export function App({
     transfersError, transfersUpdatedAt, sendToDebrid, refreshTransfers,
     removeTransfer, transfersFor, providerConfigured,
     accountsOpen, openAccounts, closeAccounts, debridAuth,
-    checkDebridAuth, saveDebridKey, saveTmdbToken, saveStreamingAvailabilityKey,
+    checkDebridAuth, saveDebridKey, saveTmdbToken, saveStreamingAvailabilityKey, saveApifyToken, saveFirecrawlKey, saveMdblistKey,
     downloadLocally, cancelDownload, openDownload, dismissDownload,
   ]);
 
@@ -594,6 +671,7 @@ export function App({
   useInput(
     (input, key) => {
       if (key.ctrl && input === "c") {
+        logEvent("info", "ui.input.action", { action: "quit", view, key: "ctrl-c" });
         quitAll();
         return;
       }
@@ -604,6 +682,7 @@ export function App({
         return;
       }
       if (input === "?") {
+        logEvent("debug", "ui.input.action", { action: "help.open", view, key: "?" });
         setShowHelp(true);
         return;
       }
@@ -611,19 +690,24 @@ export function App({
       if (key.tab) {
         setView((v) => {
           const i = TAB_ORDER.indexOf(v);
-          return TAB_ORDER[(i + 1) % TAB_ORDER.length] ?? "search";
+          const next = TAB_ORDER[(i + 1) % TAB_ORDER.length] ?? "search";
+          logEvent("info", "ui.navigation.tab", { from: v, to: next });
+          return next;
         });
         return;
       }
       if (input === "/" || input === "i") {
+        logEvent("debug", "ui.input.action", { action: "search.focus", view, key: input });
         focusSearch();
         return;
       }
       if (input === "a") {
+        logEvent("debug", "ui.input.action", { action: "accounts.open", view, key: "a" });
         setAccountsOpen(true);
         return;
       }
       if (input === "q") {
+        logEvent("info", "ui.input.action", { action: "quit", view, key: "q" });
         quitAll();
         return;
       }
@@ -676,7 +760,6 @@ export function App({
             { keys: "m", label: "Type" },
             { keys: "p", label: "Provider" },
             { keys: "l", label: "Language" },
-            { keys: "i", label: "Indian titles" },
             { keys: "t", label: "Window" },
             { keys: "enter", label: "Details" },
             { keys: "s", label: "Search torrents" },
@@ -717,6 +800,7 @@ export function App({
       <DownloadProvider
         manager={manager}
         downloadLocally={downloadLocally}
+        copyDownloadLink={copyDownloadLink}
         cancelDownload={cancelDownload}
         openDownload={openDownload}
         dismissDownload={dismissDownload}

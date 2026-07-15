@@ -8,12 +8,16 @@ export const MAX_CATALOG_RANGE_DAYS = 366;
 
 export type DiscoveryFeedKind =
   | "trending"
+  | "provider_popular"
+  | "streaming_charts"
+  | "community_popular"
   | "streaming_added"
   | "streaming_upcoming"
   | "digital"
   | "physical"
   | "bluray"
-  | "provider_dictionary";
+  | "provider_dictionary"
+  | "tamilmv_latest";
 
 export type DateRangeDirection = "past" | "upcoming";
 

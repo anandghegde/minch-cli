@@ -60,6 +60,8 @@ export interface TmdbListRow {
   genreIds: number[];
   posterPath?: string;
   popularity?: number;
+  voteAverage?: number;
+  voteCount?: number;
   date?: string;
 }
 
@@ -128,6 +130,8 @@ export interface TmdbDetailsResult {
   genreIds: number[];
   posterPath?: string;
   popularity?: number;
+  voteAverage?: number;
+  voteCount?: number;
   date?: string;
 }
 
@@ -180,6 +184,10 @@ function listRow(value: unknown): TmdbListRow | undefined {
     : [];
   const posterPath = stringValue(value.poster_path);
   const popularity = finiteNumber(value.popularity);
+  const voteAverage = finiteNumber(value.vote_average);
+  const voteCount = Number.isInteger(value.vote_count) && Number(value.vote_count) >= 0
+    ? Number(value.vote_count)
+    : undefined;
   const originalTitle = stringValue(value.original_title) ?? stringValue(value.original_name);
   const originalLanguage = stringValue(value.original_language);
   const date = stringValue(value.release_date) ?? stringValue(value.first_air_date);
@@ -193,6 +201,10 @@ function listRow(value: unknown): TmdbListRow | undefined {
     genreIds,
     ...(posterPath ? { posterPath } : {}),
     ...(popularity !== undefined ? { popularity } : {}),
+    ...(voteAverage !== undefined && voteAverage >= 0 && voteAverage <= 10
+      ? { voteAverage }
+      : {}),
+    ...(voteCount !== undefined ? { voteCount } : {}),
     ...(date ? { date } : {}),
   };
 }
@@ -336,6 +348,10 @@ export function parseTmdbDetails(value: unknown): TmdbDetailsResult {
   const originalLanguage = stringValue(value.original_language);
   const posterPath = stringValue(value.poster_path);
   const popularity = finiteNumber(value.popularity);
+  const voteAverage = finiteNumber(value.vote_average);
+  const voteCount = Number.isInteger(value.vote_count) && Number(value.vote_count) >= 0
+    ? Number(value.vote_count)
+    : undefined;
   const date = stringValue(value.release_date) ?? stringValue(value.first_air_date);
   return {
     id,
@@ -346,6 +362,10 @@ export function parseTmdbDetails(value: unknown): TmdbDetailsResult {
     genreIds,
     ...(posterPath ? { posterPath } : {}),
     ...(popularity !== undefined ? { popularity } : {}),
+    ...(voteAverage !== undefined && voteAverage >= 0 && voteAverage <= 10
+      ? { voteAverage }
+      : {}),
+    ...(voteCount !== undefined ? { voteCount } : {}),
     ...(date ? { date } : {}),
   };
 }
@@ -528,6 +548,7 @@ interface TmdbEnrichmentCacheEntry {
 function titleFromDetails(
   details: TmdbDetailsResult,
   mediaType: "movie" | "series",
+  observedAt: number,
   imdbId?: string,
 ): CatalogTitle {
   const date = parseDateOnly(details.date);
@@ -546,6 +567,16 @@ function titleFromDetails(
       ? { posterUrl: `https://image.tmdb.org/t/p/w500${details.posterPath}` }
       : {}),
     ...(details.popularity !== undefined ? { popularity: details.popularity } : {}),
+    ...(details.voteAverage !== undefined
+      ? { ratings: [{
+          system: "tmdb",
+          provider: "tmdb",
+          value: details.voteAverage,
+          scale: 10,
+          ...(details.voteCount !== undefined ? { voteCount: details.voteCount } : {}),
+          observedAt,
+        }] }
+      : {}),
   };
 }
 
@@ -606,7 +637,12 @@ export function createTmdbEnricher(options: TmdbAdapterOptions): TmdbEnricher {
           const details = parseTmdbDetails(
             await client.getJson(`/${namespace}/${request.tmdbId}`, {}, "title-details", fetchOptions.signal),
           );
-          entry!.result.title = titleFromDetails(details, request.mediaType, entry!.result.imdbId);
+          entry!.result.title = titleFromDetails(
+            details,
+            request.mediaType,
+            entry!.result.fetchedAt,
+            entry!.result.imdbId,
+          );
         } else if (field === "external_ids") {
           const external = parseTmdbExternalIds(
             await client.getJson(
@@ -680,6 +716,7 @@ function mediaTypeForRow(
 function titleFromRow(
   row: TmdbListRow,
   mediaType: MediaType,
+  observedAt: number,
 ): CatalogTitle {
   const parsedDate = parseDateOnly(row.date);
   return {
@@ -696,6 +733,16 @@ function titleFromRow(
       ? { posterUrl: `https://image.tmdb.org/t/p/w500${row.posterPath}` }
       : {}),
     ...(row.popularity !== undefined ? { popularity: row.popularity } : {}),
+    ...(row.voteAverage !== undefined
+      ? { ratings: [{
+          system: "tmdb",
+          provider: "tmdb",
+          value: row.voteAverage,
+          scale: 10,
+          ...(row.voteCount !== undefined ? { voteCount: row.voteCount } : {}),
+          observedAt,
+        }] }
+      : {}),
   };
 }
 
@@ -722,7 +769,7 @@ function mapRows(
       continue;
     }
     if (request.mediaTypes.length > 0 && !request.mediaTypes.includes(mediaType)) continue;
-    const title = titleFromRow(row, mediaType);
+    const title = titleFromRow(row, mediaType, observedAt);
     titles.push(title);
     if (releaseKind) {
       events.push({

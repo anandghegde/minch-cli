@@ -39,6 +39,28 @@ content beyond the limits recorded in ADR 001.
 - Retained cached data keeps its attribution after a subscription ends.
 - Do not expose a raw snapshot, bulk export, proxy, or downstream API.
 
+## Apify streaming catalog
+
+- Identify the source as **Apify Streaming Catalog Scraper** and link to
+  <https://apify.com/moving_beacon-owner1/streaming-catalog-scraper> beside
+  popularity results and in Credits.
+- Describe the rows as source-claimed popularity/catalog results, not official
+  OTT viewership or an endorsed provider ranking.
+- Do not expose raw Actor datasets, credentials, or an unbounded catalog export.
+
+## FlixPatrol and Letterboxd via Apify
+
+- India Charts identifies **FlixPatrol** and links to the
+  <https://apify.com/crawlerbros/flixpatrol-streaming-charts-scraper> Actor.
+- Label each row as a FlixPatrol chart signal for the named India platform;
+  FlixPatrol is independent and the result is not an official OTT viewership
+  statement.
+- Community identifies **Letterboxd** and links to the
+  <https://apify.com/zhorex/letterboxd-scraper> Actor. Describe it as a global
+  weekly community-popularity signal, not India-specific popularity.
+- Do not infer Indian language, origin, or viewership from either source when the
+  source does not provide those fields.
+
 ## Blu-ray.com
 
 - Identify **Blu-ray.com** and retain the original item/source link for every
@@ -47,6 +69,14 @@ content beyond the limits recorded in ADR 001.
   feed supplies no trustworthy region.
 - The restricted pilot does not copy descriptions, artwork, reviews, or a bulk
   catalogue and must be disabled if the source asks the project to stop.
+
+## IMDb ratings
+
+Exact IMDb ratings display the notice: **Information courtesy of IMDb (https://www.imdb.com). Used with permission.** The optional official dataset
+is downloaded only to the user's application-data directory for personal,
+non-commercial use and is never redistributed. MDBList-derived IMDb ratings
+are identified as MDBList. TMDB and aggregate fallbacks retain their own labels
+and are never described as IMDb.
 
 ## Licensing review gate
 

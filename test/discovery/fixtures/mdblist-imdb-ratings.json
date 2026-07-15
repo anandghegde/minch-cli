@@ -1,0 +1,8 @@
+[
+  {
+    "provider_id": "123",
+    "provider_rating": 8.4,
+    "mediatype": "movie",
+    "ratings": [{ "source": "imdb", "votes": 146281 }]
+  }
+]

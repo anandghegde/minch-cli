@@ -18,6 +18,8 @@ export const REFRESH_POLICIES: Readonly<Record<DiscoverySource, RefreshPolicy>> 
   bluray: { freshForMs: 24 * HOUR_MS, retainForMs: 30 * DAY_MS },
   trakt: { freshForMs: 24 * HOUR_MS, retainForMs: 30 * DAY_MS },
   "streaming-availability": { freshForMs: 12 * HOUR_MS, retainForMs: 45 * DAY_MS },
+  apify: { freshForMs: 6 * HOUR_MS, retainForMs: 14 * DAY_MS },
+  tamilmv: { freshForMs: 6 * HOUR_MS, retainForMs: 14 * DAY_MS },
 };
 
 export const PROVIDER_DICTIONARY_POLICY: RefreshPolicy = {

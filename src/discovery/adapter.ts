@@ -15,7 +15,11 @@ export type DiscoveryCapability =
   | "streaming_changes"
   | "streaming_upcoming"
   | "provider_dictionary"
-  | "cursor_pagination";
+  | "provider_popularity"
+  | "streaming_charts"
+  | "community_popularity"
+  | "cursor_pagination"
+  | "tamilmv_latest";
 
 export interface DiscoveryAdapterCapabilities {
   features: readonly DiscoveryCapability[];

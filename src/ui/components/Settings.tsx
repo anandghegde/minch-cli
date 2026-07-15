@@ -5,6 +5,7 @@ import { resolveKey, maskKey } from "../../debrid/keys";
 import { PROVIDER_LABELS, type DebridId } from "../../debrid/types";
 import type {
   DiscoveryAdapterId,
+  ImdbRatingProvider,
   RelevanceConfig,
 } from "../../config/config";
 import { truncate } from "../../util/format";
@@ -13,8 +14,12 @@ import { editText } from "../text-input";
 import {
   isDiscoveryAdapterEnabled,
   resolveStreamingAvailabilityCredential,
+  resolveApifyCredential,
+  resolveFirecrawlCredential,
   resolveTmdbCredential,
   withDiscoveryAdapterEnabled,
+  resolveMdblistCredential,
+  withDiscoveryRatingProvider,
 } from "../../discovery/config";
 
 type SettingId =
@@ -27,12 +32,18 @@ type SettingId =
   | "strictAnd"
   | "tmdb"
   | "streamingAvailability"
+  | "apify"
+  | "firecrawl"
   | "discoveryTmdb"
   | "discoveryStreaming"
-  | "discoveryBluray";
+  | "discoveryApify"
+  | "discoveryBluray"
+  | "discoveryTamilmv"
+  | "ratingProvider"
+  | "mdblist";
 
 type Editing = {
-  id: "torbox" | "realdebrid" | "tmdb" | "streamingAvailability" | "downloadDir";
+  id: "torbox" | "realdebrid" | "tmdb" | "streamingAvailability" | "apify" | "firecrawl" | "mdblist" | "downloadDir";
   draft: string;
   cursor: number;
 };
@@ -46,13 +57,25 @@ const SETTING_IDS: SettingId[] = [
   "discoveryTmdb",
   "discoveryStreaming",
   "discoveryBluray",
+  "ratingProvider",
+  "mdblist",
   "preferred",
   "preferQuality",
   "hideTrash",
   "strictAnd",
+  "apify",
+  "discoveryApify",
+  "firecrawl",
+  "discoveryTamilmv",
 ];
 
 const PREFERRED: Array<DebridId | undefined> = [undefined, "torbox", "realdebrid"];
+const RATING_PROVIDERS: ImdbRatingProvider[] = ["off", "imdb-dataset", "mdblist"];
+const RATING_PROVIDER_LABELS: Record<ImdbRatingProvider, string> = {
+  off: "Off",
+  "imdb-dataset": "Official dataset",
+  mdblist: "MDBList",
+};
 
 const DISCOVERY_ADAPTER_SETTINGS: Partial<Record<SettingId, {
   source: DiscoveryAdapterId;
@@ -63,7 +86,9 @@ const DISCOVERY_ADAPTER_SETTINGS: Partial<Record<SettingId, {
     source: "streaming-availability",
     label: "Streaming Availability discovery",
   },
+  discoveryApify: { source: "apify", label: "Apify discovery" },
   discoveryBluray: { source: "bluray", label: "Blu-ray RSS discovery" },
+  discoveryTamilmv: { source: "tamilmv", label: "TamilMV discovery" },
 };
 
 function providerLabel(id: DebridId | undefined): string {
@@ -131,15 +156,30 @@ export function Settings({
     store.setNotice(`Preferred provider: ${providerLabel(selected)}.`);
   };
 
+  const setRatingProvider = (offset: number): void => {
+    const configured = config.discovery?.ratingProvider ?? "off";
+    const index = RATING_PROVIDERS.indexOf(configured);
+    const selected = RATING_PROVIDERS[(index + offset + RATING_PROVIDERS.length) % RATING_PROVIDERS.length]!;
+    store.updateConfig((current) => withDiscoveryRatingProvider(current, selected));
+    if (selected === "mdblist" && !resolveMdblistCredential(config).apiKey) {
+      store.setNotice("MDBList selected; configure MDBLIST_API_KEY or the MDBList API key setting.");
+    } else {
+      store.setNotice(`IMDb ratings source: ${RATING_PROVIDER_LABELS[selected]}.`);
+    }
+  };
+
   useInput(
     (input, key) => {
       if (editing) {
         if (key.return) {
           if (editing.id === "downloadDir") saveDirectory(editing.draft);
           else if (editing.id === "tmdb") store.saveTmdbToken(editing.draft.trim() || undefined);
-          else if (editing.id === "streamingAvailability") {
-            store.saveStreamingAvailabilityKey(editing.draft.trim() || undefined);
-          }
+            else if (editing.id === "streamingAvailability") {
+              store.saveStreamingAvailabilityKey(editing.draft.trim() || undefined);
+            }
+            else if (editing.id === "apify") store.saveApifyToken(editing.draft.trim() || undefined);
+            else if (editing.id === "firecrawl") store.saveFirecrawlKey(editing.draft.trim() || undefined);
+          else if (editing.id === "mdblist") store.saveMdblistKey(editing.draft.trim() || undefined);
           else store.saveDebridKey(editing.id, editing.draft.trim() || undefined);
           setEditState(null);
           return;
@@ -167,33 +207,51 @@ export function Settings({
         setPreferred(-1);
       } else if (key.rightArrow && SETTING_IDS[cursor] === "preferred") {
         setPreferred(1);
+      } else if (key.leftArrow && SETTING_IDS[cursor] === "ratingProvider") {
+        setRatingProvider(-1);
+      } else if (key.rightArrow && SETTING_IDS[cursor] === "ratingProvider") {
+        setRatingProvider(1);
       } else if (input === " " && SETTING_IDS[cursor] !== "preferred") {
         const id = SETTING_IDS[cursor]!;
         if (id === "preferQuality" || id === "hideTrash" || id === "strictAnd") saveRelevance(id);
         else if (DISCOVERY_ADAPTER_SETTINGS[id]) toggleDiscoveryAdapter(id);
       } else if (input === "e" || key.return) {
         const id = SETTING_IDS[cursor]!;
-        if (id === "torbox" || id === "realdebrid" || id === "tmdb" || id === "streamingAvailability") {
+        if (id === "torbox" || id === "realdebrid" || id === "tmdb" || id === "streamingAvailability" || id === "apify" || id === "firecrawl" || id === "mdblist") {
           const resolved = id === "tmdb"
             ? resolveTmdbCredential(config)
             : id === "streamingAvailability"
               ? resolveStreamingAvailabilityCredential(config)
+              : id === "apify"
+                ? resolveApifyCredential(config)
+              : id === "firecrawl"
+                ? resolveFirecrawlCredential(config)
+              : id === "mdblist"
+                ? resolveMdblistCredential(config)
               : resolveKey(id, config);
           const label = id === "tmdb"
             ? "TMDB"
-            : id === "streamingAvailability"
-              ? "Streaming Availability"
+              : id === "streamingAvailability"
+                ? "Streaming Availability"
+                : id === "apify"
+                  ? "Apify"
+                : id === "firecrawl"
+                  ? "Firecrawl"
+                : id === "mdblist"
+                ? "MDBList"
               : PROVIDER_LABELS[id];
           if (resolved.source === "env") {
             store.setNotice(`${label} key comes from an env var; unset it to edit here.`);
           } else {
-            setEditState({ id, draft: "", cursor: 0 });
+           setEditState({ id, draft: "", cursor: 0 });
           }
         } else if (id === "downloadDir") {
           const draft = config.debrid?.downloadDir ?? "";
           setEditState({ id, draft, cursor: draft.length });
         } else if (id === "preferred") {
           setPreferred(1);
+        } else if (id === "ratingProvider") {
+          setRatingProvider(1);
         } else if (id === "preferQuality" || id === "hideTrash" || id === "strictAnd") {
           saveRelevance(id);
         } else if (DISCOVERY_ADAPTER_SETTINGS[id]) {
@@ -201,15 +259,24 @@ export function Settings({
         }
       } else if (input === "x") {
         const id = SETTING_IDS[cursor]!;
-        if (id === "torbox" || id === "realdebrid" || id === "tmdb" || id === "streamingAvailability") {
+        if (id === "torbox" || id === "realdebrid" || id === "tmdb" || id === "streamingAvailability" || id === "apify" || id === "firecrawl" || id === "mdblist") {
           const resolved = id === "tmdb"
             ? resolveTmdbCredential(config)
             : id === "streamingAvailability"
               ? resolveStreamingAvailabilityCredential(config)
+              : id === "apify"
+                ? resolveApifyCredential(config)
+              : id === "firecrawl"
+                ? resolveFirecrawlCredential(config)
+              : id === "mdblist"
+                ? resolveMdblistCredential(config)
               : resolveKey(id, config);
           if (resolved.source !== "env") {
             if (id === "tmdb") store.saveTmdbToken(undefined);
             else if (id === "streamingAvailability") store.saveStreamingAvailabilityKey(undefined);
+            else if (id === "apify") store.saveApifyToken(undefined);
+            else if (id === "firecrawl") store.saveFirecrawlKey(undefined);
+            else if (id === "mdblist") store.saveMdblistKey(undefined);
             else store.saveDebridKey(id, undefined);
           }
         } else if (id === "downloadDir") {
@@ -240,6 +307,9 @@ export function Settings({
   const realdebridKey = resolveKey("realdebrid", config);
   const tmdbToken = resolveTmdbCredential(config);
   const streamingKey = resolveStreamingAvailabilityCredential(config);
+  const apifyToken = resolveApifyCredential(config);
+  const firecrawlKey = resolveFirecrawlCredential(config);
+  const mdblistKey = resolveMdblistCredential(config);
   const relevance = config.relevance ?? {};
   const preferred = config.debrid?.preferred;
   const editingDisplay = editing
@@ -269,6 +339,18 @@ export function Settings({
     if (id === "streamingAvailability") {
       return row(id, "Streaming Availability key", streamingKey.apiKey ? maskKey(streamingKey.apiKey) : "not configured", streamingKey.source === "env" ? "env" : undefined);
     }
+    if (id === "apify") {
+      return row(id, "Apify API token", apifyToken.apiToken ? maskKey(apifyToken.apiToken) : "not configured", apifyToken.source === "env" ? "env" : undefined);
+    }
+    if (id === "firecrawl") {
+      return row(id, "Firecrawl API key", firecrawlKey.apiKey ? maskKey(firecrawlKey.apiKey) : "not configured", firecrawlKey.source === "env" ? "env" : undefined);
+    }
+    if (id === "ratingProvider") {
+      return row(id, "IMDb ratings source", RATING_PROVIDER_LABELS[config.discovery?.ratingProvider ?? "off"]);
+    }
+    if (id === "mdblist") {
+      return row(id, "MDBList API key", mdblistKey.apiKey ? maskKey(mdblistKey.apiKey) : "not configured", mdblistKey.source === "env" ? "env" : undefined);
+    }
     if (id === "discoveryTmdb") {
       return row(id, "TMDB discovery", isDiscoveryAdapterEnabled(config, "tmdb") ? "on" : "off");
     }
@@ -277,6 +359,12 @@ export function Settings({
     }
     if (id === "discoveryBluray") {
       return row(id, "Blu-ray RSS discovery", isDiscoveryAdapterEnabled(config, "bluray") ? "on" : "off");
+    }
+    if (id === "discoveryApify") {
+      return row(id, "Apify discovery", isDiscoveryAdapterEnabled(config, "apify") ? "on" : "off");
+    }
+    if (id === "discoveryTamilmv") {
+      return row(id, "TamilMV discovery", isDiscoveryAdapterEnabled(config, "tamilmv") ? "on" : "off");
     }
     if (id === "preferred") return row(id, "Preferred provider", providerLabel(preferred));
     if (id === "preferQuality") {
@@ -310,6 +398,12 @@ export function Settings({
                 ? "TMDB read token"
                 : editing.id === "streamingAvailability"
                   ? "Streaming Availability API key"
+                  : editing.id === "apify"
+                    ? "Apify API token"
+                  : editing.id === "firecrawl"
+                    ? "Firecrawl API key"
+                  : editing.id === "mdblist"
+                    ? "MDBList API key"
                   : `${PROVIDER_LABELS[editing.id]} key`}`} — enter to save, esc to cancel
           </Text>
           <Box borderStyle="round" borderColor={COLOR.accent} paddingX={1}>
@@ -320,7 +414,7 @@ export function Settings({
         </Box>
       ) : (
         <Box marginTop={1} flexDirection="column">
-          <Text color={COLOR.dim}>↑↓ select · e/enter edit · space toggle · ←→ preferred · x clear</Text>
+          <Text color={COLOR.dim}>↑↓ select · e/enter edit · space toggle · ←→ choice · x clear</Text>
           <Text color={COLOR.dim}>Keys from environment variables cannot be edited here.</Text>
         </Box>
       )}

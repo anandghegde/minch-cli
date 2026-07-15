@@ -85,6 +85,31 @@ describe("canonical discovery feed classification", () => {
     expect(feeds.trending.some((entry) => entry.title?.tmdbId === 2)).toBe(false);
   });
 
+  it("keeps FlixPatrol chart titles in an independent title-only feed", () => {
+    const chart = title("apify:flixpatrol:netflix:movie:chart-title", 10);
+    const popular = title("apify:popular:movie:popular-title", 11);
+    const snapshots = [
+      snapshot("apify", "streaming_charts", [chart]),
+      snapshot("apify", "provider_popular", [popular]),
+    ];
+    const canonical = aggregate(snapshots);
+
+    const feeds = classifyDiscoveryFeeds(snapshots, canonical.identities, canonical.events);
+    expect(feeds.charts.map((entry) => entry.title?.tmdbId)).toEqual([10]);
+    expect(feeds.popular.map((entry) => entry.title?.tmdbId)).toEqual([11]);
+    expect(feeds.charts[0]!.event).toBeUndefined();
+  });
+
+  it("keeps Letterboxd weekly titles in an independent community feed", () => {
+    const community = title("apify:letterboxd:movie:community", 12);
+    const snapshots = [snapshot("apify", "community_popular", [community])];
+    const canonical = aggregate(snapshots);
+
+    const feeds = classifyDiscoveryFeeds(snapshots, canonical.identities, canonical.events);
+    expect(feeds.community.map((entry) => entry.title?.tmdbId)).toEqual([12]);
+    expect(feeds.community[0]!.event).toBeUndefined();
+  });
+
   it("classifies only streaming events as OTT and can exclude upcoming", () => {
     const shared = title("streaming:title", 3);
     const snapshots = [snapshot("streaming-availability", "streaming_added", [shared], [

@@ -13,6 +13,8 @@ export interface SourceBudget {
 /** Fixed conservative policy; callers cannot raise these through configuration. */
 export const SOURCE_BUDGETS: Readonly<Partial<Record<DiscoverySource, SourceBudget>>> = {
   "streaming-availability": { softWarning: 350, hardCap: 450 },
+  apify: { softWarning: 80, hardCap: 100 },
+  tamilmv: { softWarning: 40, hardCap: 60 },
   trakt: { softWarning: 0, hardCap: 0 },
 };
 

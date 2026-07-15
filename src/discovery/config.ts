@@ -1,9 +1,15 @@
-import type { Config, DiscoveryAdapterId } from "../config/config";
+import type { Config, DiscoveryAdapterId, ImdbRatingProvider } from "../config/config";
 
 export const TMDB_READ_TOKEN_ENV = "TMDB_READ_TOKEN";
 export const TMDB_API_BASE_URL = "https://api.themoviedb.org/3";
 export const STREAMING_AVAILABILITY_API_KEY_ENV = "STREAMING_AVAILABILITY_API_KEY";
 export const STREAMING_AVAILABILITY_API_BASE_URL = "https://api.movieofthenight.com/v4";
+export const MDBLIST_API_KEY_ENV = "MDBLIST_API_KEY";
+export const APIFY_API_TOKEN_ENV = "APIFY_API_TOKEN";
+export const APIFY_API_BASE_URL = "https://api.apify.com/v2";
+export const FIRECRAWL_API_KEY_ENV = "FIRECRAWL_API_KEY";
+export const FIRECRAWL_API_BASE_URL = "https://api.firecrawl.dev";
+export const TAMILMV_DEFAULT_BASE_URL = "https://www.1tamilmv.reisen/";
 
 export const TMDB_CONFIG_DESCRIPTOR = {
   id: "tmdb",
@@ -30,6 +36,21 @@ export interface ResolvedTmdbCredential {
 }
 
 export interface ResolvedStreamingAvailabilityCredential {
+  apiKey?: string;
+  source: DiscoveryCredentialSource;
+}
+
+export interface ResolvedMdblistCredential {
+  apiKey?: string;
+  source: DiscoveryCredentialSource;
+}
+
+export interface ResolvedApifyCredential {
+  apiToken?: string;
+  source: DiscoveryCredentialSource;
+}
+
+export interface ResolvedFirecrawlCredential {
   apiKey?: string;
   source: DiscoveryCredentialSource;
 }
@@ -130,6 +151,102 @@ export function withStreamingAvailabilityApiKey(
     ...config,
     discovery: Object.keys(discovery).length > 0 ? discovery : undefined,
   };
+}
+
+export function resolveApifyCredential(
+  config: Config,
+  env: Record<string, string | undefined> = process.env,
+): ResolvedApifyCredential {
+  const fromEnv = clean(env[APIFY_API_TOKEN_ENV]);
+  if (fromEnv) return { apiToken: fromEnv, source: "env" };
+  const fromConfig = clean(config.discovery?.apify?.apiToken);
+  if (fromConfig) return { apiToken: fromConfig, source: "config" };
+  return { source: "none" };
+}
+
+export function withApifyApiToken(config: Config, apiToken: string | undefined): Config {
+  const cleaned = clean(apiToken);
+  if (cleaned) {
+    return {
+      ...config,
+      discovery: { ...(config.discovery ?? {}), apify: { apiToken: cleaned } },
+    };
+  }
+  const discovery = { ...(config.discovery ?? {}) };
+  delete discovery.apify;
+  return {
+    ...config,
+    discovery: Object.keys(discovery).length > 0 ? discovery : undefined,
+  };
+}
+
+export function resolveFirecrawlCredential(
+  config: Config,
+  env: Record<string, string | undefined> = process.env,
+): ResolvedFirecrawlCredential {
+  const fromEnv = clean(env[FIRECRAWL_API_KEY_ENV]);
+  if (fromEnv) return { apiKey: fromEnv, source: "env" };
+  const fromConfig = clean(config.discovery?.firecrawl?.apiKey);
+  if (fromConfig) return { apiKey: fromConfig, source: "config" };
+  return { source: "none" };
+}
+
+export function withFirecrawlApiKey(config: Config, apiKey: string | undefined): Config {
+  const cleaned = clean(apiKey);
+  if (cleaned) {
+    return {
+      ...config,
+      discovery: { ...(config.discovery ?? {}), firecrawl: { apiKey: cleaned } },
+    };
+  }
+  const discovery = { ...(config.discovery ?? {}) };
+  delete discovery.firecrawl;
+  return {
+    ...config,
+    discovery: Object.keys(discovery).length > 0 ? discovery : undefined,
+  };
+}
+
+export function resolveTamilmvBaseUrl(config: Config): string {
+  const configured = clean(config.discovery?.tamilmv?.baseUrl);
+  if (configured) {
+    try {
+      const url = new URL(configured);
+      if (url.protocol === "https:") return url.href;
+    } catch {
+      // fall through to default
+    }
+  }
+  return TAMILMV_DEFAULT_BASE_URL;
+}
+
+export function resolveMdblistCredential(
+  config: Config,
+  env: Record<string, string | undefined> = process.env,
+): ResolvedMdblistCredential {
+  const fromEnv = clean(env[MDBLIST_API_KEY_ENV]);
+  if (fromEnv) return { apiKey: fromEnv, source: "env" };
+  const fromConfig = clean(config.discovery?.mdblist?.apiKey);
+  if (fromConfig) return { apiKey: fromConfig, source: "config" };
+  return { source: "none" };
+}
+
+export function withMdblistApiKey(config: Config, apiKey: string | undefined): Config {
+  const cleaned = clean(apiKey);
+  if (cleaned) return { ...config, discovery: { ...(config.discovery ?? {}), mdblist: { apiKey: cleaned } } };
+  const discovery = { ...(config.discovery ?? {}) };
+  delete discovery.mdblist;
+  return { ...config, discovery: Object.keys(discovery).length > 0 ? discovery : undefined };
+}
+
+export function withDiscoveryRatingProvider(
+  config: Config,
+  ratingProvider: ImdbRatingProvider,
+): Config {
+  const discovery = { ...(config.discovery ?? {}) };
+  if (ratingProvider === "off") delete discovery.ratingProvider;
+  else discovery.ratingProvider = ratingProvider;
+  return { ...config, discovery: Object.keys(discovery).length > 0 ? discovery : undefined };
 }
 
 /** One body-free authenticated request; response/error text is never exposed. */

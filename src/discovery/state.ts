@@ -69,8 +69,11 @@ function snapshotWarnings(
 function isQuotaError(error: Error | undefined): boolean {
   if (!error) return false;
   if (error instanceof DiscoveryBudgetExceededError) return true;
-  if ("status" in error && error.status === 429) return true;
-  if ("code" in error && (error.code === "quota" || error.code === "HTTP 429")) return true;
+  if ("status" in error && (error.status === 402 || error.status === 429)) return true;
+  if (
+    "code" in error &&
+    (error.code === "quota" || error.code === "HTTP 402" || error.code === "HTTP 429")
+  ) return true;
   return false;
 }
 

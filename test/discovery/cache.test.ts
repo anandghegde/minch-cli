@@ -153,4 +153,22 @@ describe("discovery cache format", () => {
       rejectedEntries: [{ key, reason: "invalid cache entry" }],
     });
   });
+
+  it("accepts optional ratings without making older rating-free snapshots unreadable", () => {
+    const req = request();
+    const rated = snapshot();
+    rated.titles[0]!.ratings = [{
+      system: "aggregate", provider: "streaming-availability", value: 82,
+      scale: 100, observedAt: FETCHED_AT,
+    }];
+    const entry = createDiscoveryCacheEntry(
+      req, rated, FETCHED_AT + 1_000, FETCHED_AT + 2_000,
+    );
+    const key = discoveryRequestKey(entry.source, req);
+    expect(parseDiscoveryCache({ version: 1, entries: { [key]: entry } })
+      .document.entries[key]?.snapshot.titles[0]?.ratings?.[0]?.value).toBe(82);
+    expect(() => createDiscoveryCacheEntry(
+      req, snapshot(), FETCHED_AT + 1_000, FETCHED_AT + 2_000,
+    )).not.toThrow();
+  });
 });

@@ -7,6 +7,7 @@ import {
   DISCOVERY_SOURCE_CLAIM_NOTICE,
   JUSTWATCH_ATTRIBUTION_NOTICE,
   TMDB_REQUIRED_NOTICE,
+  IMDB_REQUIRED_NOTICE,
 } from "../../src/discovery/attribution";
 import { BLURAY_ATTRIBUTION } from "../../src/discovery/sources/bluray";
 import { STREAMING_AVAILABILITY_ATTRIBUTION } from "../../src/discovery/sources/streaming-availability";
@@ -33,10 +34,12 @@ describe("discovery attribution surfaces", () => {
     expect(HELP_TEXT).toContain(DISCOVERY_CREDITS_NOTICE);
     expect(HELP_TEXT).toContain(TMDB_REQUIRED_NOTICE);
     expect(HELP_TEXT).toContain(JUSTWATCH_ATTRIBUTION_NOTICE);
+    expect(HELP_TEXT).toContain(IMDB_REQUIRED_NOTICE);
     expect(DISCOVERY_HELP_FOOTNOTES.join("\n")).toContain(DISCOVERY_SOURCE_CLAIM_NOTICE);
     expect(DISCOVERY_HELP_FOOTNOTES.join("\n")).toContain(DISCOVERY_CREDITS_NOTICE);
     expect(DISCOVERY_HELP_FOOTNOTES).toContain(TMDB_REQUIRED_NOTICE);
     expect(DISCOVERY_HELP_FOOTNOTES).toContain(JUSTWATCH_ATTRIBUTION_NOTICE);
+    expect(DISCOVERY_HELP_FOOTNOTES).toContain(IMDB_REQUIRED_NOTICE);
   });
 
   it("documents credits, source-claim limits, and the monetization review gate", () => {
@@ -49,6 +52,7 @@ describe("discovery attribution surfaces", () => {
       expect(content).toContain("TMDB");
       expect(content).toContain("Streaming Availability API by Movie of the Night");
       expect(content).toContain("Blu-ray.com");
+      expect(content).toContain(IMDB_REQUIRED_NOTICE);
       expect(content).toMatch(/source claims/i);
       expect(content).toMatch(/coverage may be\s+incomplete/i);
       expect(content).toMatch(/non-commercial/i);

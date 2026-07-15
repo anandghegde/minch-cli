@@ -93,6 +93,9 @@ export interface Store {
   saveDebridKey: (id: DebridId, key: string | undefined) => void;
   saveTmdbToken: (token: string | undefined) => void;
   saveStreamingAvailabilityKey: (key: string | undefined) => void;
+  saveApifyToken: (token: string | undefined) => void;
+  saveFirecrawlKey: (key: string | undefined) => void;
+  saveMdblistKey: (key: string | undefined) => void;
 
   quitAll: () => void;
 

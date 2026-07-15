@@ -10,6 +10,9 @@ import {
   withStreamingAvailabilityApiKey,
   withDiscoveryAdapterEnabled,
   withTmdbReadToken,
+  resolveMdblistCredential,
+  withMdblistApiKey,
+  withDiscoveryRatingProvider,
 } from "../../src/discovery/config";
 
 describe("TMDB credential descriptor", () => {
@@ -102,5 +105,20 @@ describe("TMDB credential descriptor", () => {
       headerName: "X-API-Key",
     });
     expect("transport" in STREAMING_AVAILABILITY_CONFIG_DESCRIPTOR).toBe(false);
+  });
+
+  it("keeps exact IMDb enrichment opt-in and resolves MDBList env credentials first", () => {
+    const configured = withDiscoveryRatingProvider(
+      withMdblistApiKey(defaultConfig, " config-mdblist "),
+      "mdblist",
+    );
+    expect(configured.discovery?.ratingProvider).toBe("mdblist");
+    expect(resolveMdblistCredential(configured, { MDBLIST_API_KEY: " env-mdblist " }))
+      .toEqual({ apiKey: "env-mdblist", source: "env" });
+    expect(resolveMdblistCredential(configured, {}))
+      .toEqual({ apiKey: "config-mdblist", source: "config" });
+    const off = withDiscoveryRatingProvider(configured, "off");
+    expect(off.discovery?.ratingProvider).toBeUndefined();
+    expect(off.discovery?.mdblist?.apiKey).toBe("config-mdblist");
   });
 });

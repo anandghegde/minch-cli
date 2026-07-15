@@ -19,29 +19,26 @@ describe("screen-local discovery state", () => {
       feed: "trending",
       media: "all",
       dateWindow: "30d",
-      indianTitlesOnly: false,
       cursor: 0,
       detailsOpen: false,
     });
   });
 
-  it("stores feed, media, window, provider, language, format, and India filters", () => {
+  it("stores feed, media, window, provider, language, and format filters", () => {
     expect(reduce([
-      { type: "set-feed", feed: "india" },
+      { type: "set-feed", feed: "charts" },
       { type: "set-media", media: "series" },
       { type: "set-date-window", dateWindow: "upcoming-7d" },
       { type: "set-provider", providerId: "netflix" },
       { type: "set-language", languageCode: "hi" },
       { type: "set-format", formatLabel: "Blu-ray" },
-      { type: "toggle-indian-titles" },
     ])).toMatchObject({
-      feed: "india",
+      feed: "charts",
       media: "series",
       dateWindow: "upcoming-7d",
       providerId: "netflix",
       languageCode: "hi",
       formatLabel: "Blu-ray",
-      indianTitlesOnly: true,
     });
   });
 

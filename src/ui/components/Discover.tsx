@@ -5,11 +5,19 @@ import {
   type DiscoveryFeedEntry,
   type DiscoveryFeedFilters,
 } from "../../discovery/aggregate";
-import { DISCOVERY_SOURCE_CLAIM_NOTICE } from "../../discovery/attribution";
+import {
+  DISCOVERY_SOURCE_CLAIM_NOTICE,
+  IMDB_REQUIRED_NOTICE,
+} from "../../discovery/attribution";
 import { languageLabel, normalizeLanguage } from "../../discovery/normalize";
 import { buildDiscoverySearchQuery } from "../../discovery/search-handoff";
-import type { DiscoverySource } from "../../discovery/types";
+import type { CatalogRating, DiscoverySource } from "../../discovery/types";
+import {
+  formatRatingValue,
+  selectPreferredRating,
+} from "../../discovery/ratings/types";
 import { cleanText, formatRelative, truncate } from "../../util/format";
+import { logEvent } from "../../util/logger";
 import {
   DISCOVERY_DATE_WINDOWS,
   DISCOVERY_DATE_WINDOW_LABELS,
@@ -31,18 +39,25 @@ import { Spinner } from "./Spinner";
 
 const FEED_LABELS = {
   trending: "Trending",
+  popular: "Popular",
+  charts: "India Charts",
+  community: "Community",
   ott: "OTT",
   bluray: "Blu-ray",
-  india: "India",
+  tamilmv: "TamilMV",
 } as const;
 
 const MEDIA_LABELS = { all: "All", movie: "Movies", series: "Series" } as const;
+
+const MEDIA_TYPE_LABELS = { movie: "Movie", series: "TV", season: "TV", episode: "TV" } as const;
 
 const SOURCE_LABELS: Record<DiscoverySource, string> = {
   tmdb: "TMDB",
   bluray: "Blu-ray.com",
   trakt: "Trakt",
   "streaming-availability": "Streaming Availability",
+  apify: "Apify",
+  tamilmv: "1TamilMV",
 };
 
 export interface DiscoveryContentProps {
@@ -124,14 +139,40 @@ function cycle<T extends readonly string[]>(values: T, current: T[number], delta
   return values[(index + delta + values.length) % values.length]!;
 }
 
-function sourceNames(entry: DiscoveryFeedEntry): string {
-  if (!entry.event) return "TMDB";
+function blurayTitleKey(entry: DiscoveryFeedEntry): string | undefined {
+  if (!entry.title) return undefined;
+  const normalizedTitle = cleanText(entry.title.title)
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+  return `${normalizedTitle}\u0000${entry.title.year ?? ""}\u0000${entry.title.mediaType}`;
+}
+
+export function dedupeBlurayEntries(entries: readonly DiscoveryFeedEntry[]): DiscoveryFeedEntry[] {
+  const seenTitles = new Set<string>();
+  return entries.filter((entry) => {
+    const key = blurayTitleKey(entry);
+    if (!key) return true;
+    if (seenTitles.has(key)) return false;
+    seenTitles.add(key);
+    return true;
+  });
+}
+
+function sourceNames(entry: DiscoveryFeedEntry, feed: DiscoveryScreenState["feed"]): string {
+  if (!entry.event) {
+    return feed === "popular" || feed === "charts" || feed === "community" ? "Apify" : "TMDB";
+  }
   return [...new Set(entry.event.evidence.map((evidence) => SOURCE_LABELS[evidence.source]))]
     .join("+");
 }
 
-function eventLabel(entry: DiscoveryFeedEntry): string {
-  if (!entry.event) return "Trending";
+function eventLabel(entry: DiscoveryFeedEntry, feed: DiscoveryScreenState["feed"]): string {
+  if (!entry.event) {
+    if (feed === "charts") return entry.title?.providerLabels?.join("+") ?? "Chart";
+    if (feed === "community") return "Letterboxd";
+    return feed === "popular" ? "Popular" : "Trending";
+  }
   return cleanText(entry.event.providerLabel ??
     entry.event.formatLabel ??
     entry.event.kind.replace(/_/g, " "));
@@ -139,6 +180,49 @@ function eventLabel(entry: DiscoveryFeedEntry): string {
 
 function sourceStatusText(model: DiscoveryUiModel): string {
   return model.sourceStates.map(({ label, state }) => `${label}: ${state.status}`).join(" · ");
+}
+
+export function formatVoteCount(value: number): string {
+  if (!Number.isInteger(value) || value < 0) return "";
+  if (value < 1_000) return String(value);
+  if (value < 1_000_000) return `${Math.round(value / 1_000)}K`;
+  const millions = value / 1_000_000;
+  return `${millions >= 10 ? Math.round(millions) : millions.toFixed(1).replace(/\.0$/, "")}M`;
+}
+
+function ratingLabel(rating: CatalogRating): string {
+  return rating.system === "imdb" ? "IMDb" : rating.system === "tmdb" ? "TMDB" : "Score";
+}
+
+function formattedScore(rating: CatalogRating): string {
+  const value = formatRatingValue(rating);
+  return rating.system === "aggregate" ? String(Math.round(rating.value)) : value.toFixed(1);
+}
+
+export function formatDiscoveryRating(rating: CatalogRating): string {
+  const votes = rating.voteCount === undefined ? "" : ` · ${formatVoteCount(rating.voteCount)}`;
+  return `${ratingLabel(rating)} ${formattedScore(rating)}${votes}`;
+}
+
+function formatCompactRating(rating: CatalogRating): string {
+  if (rating.system === "aggregate") return `Score ${Math.round(rating.value)}`;
+  return `${formattedScore(rating)}${rating.voteCount === undefined ? "" : `/${formatVoteCount(rating.voteCount)}`}`;
+}
+
+function providerDescription(rating: CatalogRating): string {
+  if (rating.provider === "imdb-dataset") return "Official IMDb dataset";
+  if (rating.provider === "mdblist") return "MDBList · IMDb rating";
+  if (rating.provider === "tmdb") return "TMDB";
+  return "Streaming Availability blended score";
+}
+
+function formatRatingAge(observedAt: number): string {
+  const minutes = Math.max(0, Math.floor((Date.now() - observedAt) / 60_000));
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 function sameClaim(left: DiscoveryFeedEntry["event"], right: DiscoveryFeedEntry["event"]): boolean {
@@ -163,13 +247,16 @@ function DiscoveryDetails({
   entry,
   model,
   cols,
+  feed,
 }: {
   entry: DiscoveryFeedEntry;
   model: DiscoveryUiModel;
   cols: number;
+  feed: DiscoveryScreenState["feed"];
 }) {
   const { title, event } = entry;
   const attributions = model.attributions;
+  const rating = title ? selectPreferredRating(model.ratings.get(title.id) ?? title.ratings ?? []) : undefined;
   const sourceLinks = [...new Set(event?.evidence.flatMap((evidence) =>
     evidence.sourceUrl ? [evidence.sourceUrl] : []) ?? [])];
   return (
@@ -185,8 +272,25 @@ function DiscoveryDetails({
       </Text>
       <Text color={COLOR.alt}>
         Media: {title?.mediaType ?? "unknown"}
-        {event ? ` · ${event.kind.replace(/_/g, " ")} · ${event.date ?? "date unknown"} · ${event.region}` : " · Trending"}
+        {event
+          ? ` · ${event.kind.replace(/_/g, " ")} · ${event.date ?? "date unknown"} · ${event.region}`
+          : ` · ${FEED_LABELS[feed]}`}
       </Text>
+      {rating ? (
+        <>
+          <Text color={COLOR.alt}>
+            {ratingLabel(rating)}: {formattedScore(rating)}/{rating.system === "aggregate" ? 100 : 10}
+            {rating.voteCount !== undefined ? ` · ${rating.voteCount.toLocaleString("en-US")} votes` : ""}
+          </Text>
+          <Text color={COLOR.alt}>Rating provider: {providerDescription(rating)}</Text>
+          <Text color={COLOR.alt}>
+            Observed: {formatRatingAge(rating.observedAt)}
+          </Text>
+        </>
+      ) : (
+        <Text color={COLOR.alt}>IMDb: Not rated or identity unavailable</Text>
+      )}
+      {rating?.system === "imdb" ? <Text color={COLOR.dim}>{IMDB_REQUIRED_NOTICE}</Text> : null}
       {event ? (
         <Text color={COLOR.alt}>
           Provider/format: {cleanText(event.providerLabel ?? event.formatLabel ?? "not supplied")}
@@ -254,9 +358,11 @@ function DiscoveryDetails({
 function DiscoveryEmpty({
   model,
   baseCount,
+  cols,
 }: {
   model: DiscoveryUiModel;
   baseCount: number;
+  cols: number;
 }) {
   const reason = discoveryEmptyReason(model, baseCount);
   const tmdbMissing = model.sourceStates.some(({ state }) =>
@@ -265,6 +371,14 @@ function DiscoveryEmpty({
   const streamingMissing = model.sourceStates.some(({ state }) =>
     state.source === "streaming-availability" &&
     (state.status === "unconfigured" || state.status === "auth-failed"));
+  const apifyMissing = model.sourceStates.some(({ state }) =>
+    state.source === "apify" &&
+    (state.status === "unconfigured" || state.status === "auth-failed"));
+  const tamilmvMissing = model.sourceStates.some(({ state }) =>
+    state.source === "tamilmv" &&
+    (state.status === "unconfigured" || state.status === "auth-failed"));
+  const failures = [...new Set(model.sourceStates.flatMap(({ label, state }) =>
+    state.error?.message ? [`${label}: ${state.error.message}`] : []))];
   const message = reason === "filters"
     ? "Filters removed all discovery rows; adjust type, window, provider, language, or format."
     : reason === "offline-no-cache"
@@ -291,7 +405,22 @@ function DiscoveryEmpty({
           Streaming: set STREAMING_AVAILABILITY_API_KEY or use Settings → Streaming Availability key.
         </Text>
       ) : null}
-      {tmdbMissing || streamingMissing ? (
+      {apifyMissing ? (
+        <Text color={COLOR.dim}>
+          Apify: set APIFY_API_TOKEN or use Settings → Apify API token.
+        </Text>
+      ) : null}
+      {tamilmvMissing ? (
+        <Text color={COLOR.dim}>
+          TamilMV: set FIRECRAWL_API_KEY or use Settings → Firecrawl API key.
+        </Text>
+      ) : null}
+      {failures.map((failure) => (
+        <Text key={failure} color={COLOR.warn}>
+          {truncate(failure, Math.max(20, cols - 2))}
+        </Text>
+      ))}
+      {tmdbMissing || streamingMissing || apifyMissing || tamilmvMissing ? (
         <Text color={COLOR.dim}>Blu-ray remains available without credentials.</Text>
       ) : null}
     </Box>
@@ -310,20 +439,21 @@ export function DiscoveryContent({
   const date = discoveryDateSelection(screen.dateWindow);
   const filters: DiscoveryFeedFilters = {
     ...(screen.media === "all" ? {} : { mediaTypes: [screen.media] }),
-    ...(screen.feed === "trending" ? {} : { date }),
-    ...(screen.providerId && (screen.feed === "ott" || screen.feed === "india")
+    ...(screen.feed === "trending" || screen.feed === "popular" || screen.feed === "charts" || screen.feed === "community" || screen.feed === "tamilmv" ? {} : { date }),
+    ...(screen.providerId && (screen.feed === "ott" || screen.feed === "popular" || screen.feed === "charts")
       ? { providerIds: [screen.providerId] }
       : {}),
     ...(screen.languageCode ? { languageCodes: [screen.languageCode] } : {}),
     ...(screen.formatLabel ? { formatLabels: [screen.formatLabel] } : {}),
-    ...(screen.indianTitlesOnly ? { indianTitlesOnly: true } : {}),
   };
-  const entries = useMemo(
-    () => selectDiscoveryEntries(
+  const entries = useMemo(() => {
+    const selected = selectDiscoveryEntries(
       model.aggregation.feeds[screen.feed],
       filters,
       { direction: date.direction },
-    ),
+    );
+    return screen.feed === "bluray" ? dedupeBlurayEntries(selected) : selected;
+  },
     [date.direction, filters, model.aggregation.feeds, screen.feed],
   );
   const baseEntries = model.aggregation.feeds[screen.feed];
@@ -340,7 +470,60 @@ export function DiscoveryContent({
     dispatch({ type: "clamp-cursor", rowCount: entries.length });
   }, [dispatch, entries.length]);
 
+  useEffect(() => {
+    if (!active) return;
+    logEvent("info", "discover.screen.state", {
+      feed: screen.feed,
+      dateWindow: screen.dateWindow,
+      media: screen.media,
+      providerId: screen.providerId,
+      languageCode: screen.languageCode,
+      detailsOpen: screen.detailsOpen,
+      cursor: screen.cursor,
+      resultCount: entries.length,
+      loading: model.loading,
+      completedSources: model.done,
+      totalSources: model.total,
+    });
+  }, [
+    active,
+    entries.length,
+    model.done,
+    model.loading,
+    model.total,
+    screen.cursor,
+    screen.dateWindow,
+    screen.detailsOpen,
+    screen.feed,
+    screen.languageCode,
+    screen.media,
+    screen.providerId,
+  ]);
+
   useInput((input, key) => {
+    const action = key.leftArrow ? "feed.previous"
+      : key.rightArrow ? "feed.next"
+      : key.downArrow || input === "j" ? "cursor.next"
+      : key.upArrow || input === "k" ? "cursor.previous"
+      : key.return ? (screen.detailsOpen ? "details.close" : "details.open")
+      : key.escape ? "details.close"
+      : input === "s" ? "search.handoff"
+      : input === "m" ? "media.next"
+      : input === "p" ? "provider.next"
+      : input === "l" ? "language.next"
+      : input === "t" ? "window.next"
+      : input === "r" ? "refresh"
+      : /^[1-9]$/.test(input) ? "feed.select"
+      : input === "g" || input === "G" ? "cursor.jump"
+      : undefined;
+    if (action) {
+      logEvent("debug", "discover.input.action", {
+        action,
+        feed: screen.feed,
+        cursor: screen.cursor,
+        resultCount: entries.length,
+      });
+    }
     if (input === "s") {
       const query = entries[screen.cursor] ? discoverySearchQuery(entries[screen.cursor]!) : undefined;
       if (query) onSearch?.(query);
@@ -358,7 +541,7 @@ export function DiscoveryContent({
       dispatch({ type: "set-feed", feed: cycle(DISCOVERY_FEEDS, screen.feed, 1) });
       return;
     }
-    if (/^[1-4]$/.test(input)) {
+    if (/^[1-9]$/.test(input) && Number(input) <= DISCOVERY_FEEDS.length) {
       dispatch({ type: "set-feed", feed: DISCOVERY_FEEDS[Number(input) - 1]! });
       return;
     }
@@ -366,7 +549,7 @@ export function DiscoveryContent({
       dispatch({ type: "set-media", media: cycle(DISCOVERY_MEDIA_FILTERS, screen.media, 1) });
       return;
     }
-    if (input === "p" && (screen.feed === "ott" || screen.feed === "india")) {
+    if (input === "p" && (screen.feed === "ott" || screen.feed === "popular" || screen.feed === "charts")) {
       const current = Math.max(
         0,
         providerChoices.findIndex((provider) => provider.id === screen.providerId),
@@ -387,12 +570,14 @@ export function DiscoveryContent({
       dispatch({ type: "set-language", languageCode: selected.code });
       return;
     }
-    if (input === "i" && screen.feed === "india") {
-      dispatch({ type: "toggle-indian-titles" });
-      return;
-    }
     if (input === "t") {
-      if (screen.feed === "trending") return;
+      if (
+        screen.feed === "trending" ||
+        screen.feed === "popular" ||
+        screen.feed === "charts" ||
+        screen.feed === "community" ||
+        screen.feed === "tamilmv"
+      ) return;
       dispatch({
         type: "set-date-window",
         dateWindow: cycle(DISCOVERY_DATE_WINDOWS, screen.dateWindow, 1),
@@ -418,18 +603,20 @@ export function DiscoveryContent({
     }
   }, { isActive: active });
 
-  const capacity = Math.max(3, listRows - 4);
-  const start = Math.max(
-    0,
-    Math.min(
-      screen.cursor - Math.floor(capacity / 2),
-      Math.max(0, entries.length - capacity),
-    ),
-  );
-  const visible = entries.slice(start, start + capacity);
-  const selectedEntry = entries[screen.cursor];
-  const narrow = cols < 90;
-  const titleWidth = Math.max(18, cols - (narrow ? 31 : 70));
+  const charts = screen.feed === "charts";
+  const wide = cols >= 100;
+  const medium = cols >= 80 && cols < 100;
+  const compact = cols >= 70 && cols < 80;
+  const ratingWidth = charts ? 10 : wide ? 18 : medium ? 17 : 12;
+  const votesWidth = charts ? (cols >= 80 ? 10 : 9) : 0;
+  const typeWidth = charts ? 7 : 0;
+  const eventWidth = cols >= 70 ? 13 : 0;
+  const languageWidth = cols >= 80 ? (wide ? 14 : 13) : 0;
+  const sourceWidth = wide && !charts ? 11 : 0;
+  // Ink measures the pointer glyph as two cells on some terminals; reserve one
+  // extra cell so the last column never wraps.
+  const fixedWidth = 3 + 12 + ratingWidth + votesWidth + typeWidth + eventWidth + languageWidth + sourceWidth;
+  const titleWidth = Math.max(1, cols - fixedWidth);
   const lastRefreshed = Math.max(
     0,
     ...model.sourceStates.flatMap(({ state }) => state.snapshot ? [state.snapshot.fetchedAt] : []),
@@ -441,9 +628,24 @@ export function DiscoveryContent({
     state.status === "auth-failed" ||
     state.status === "quota-paused" ||
     state.status === "failed");
+  const chromeRows = 5 +
+    (model.sourceStates.length > 0 ? 1 : 0) +
+    (cols < 80 ? 1 : 0) +
+    (charts ? 1 : 0) +
+    (partial ? 1 : 0);
+  const capacity = Math.max(1, listRows - chromeRows);
+  const start = Math.max(
+    0,
+    Math.min(
+      screen.cursor - Math.floor(capacity / 2),
+      Math.max(0, entries.length - capacity),
+    ),
+  );
+  const visible = entries.slice(start, start + capacity);
+  const selectedEntry = entries[screen.cursor];
 
   return (
-    <Box flexDirection="column" flexGrow={1}>
+    <Box flexDirection="column" flexGrow={1} width={cols}>
       <Box justifyContent="space-between">
         {model.loading ? (
           <Spinner label={`loading discovery ${model.done}/${model.total}`} />
@@ -460,25 +662,24 @@ export function DiscoveryContent({
         <Text color={COLOR.dim}>←→ feed · m type · t window · r refresh</Text>
       </Box>
 
-      <Box marginTop={1}>
-        {DISCOVERY_FEEDS.map((feed) => {
-          const selected = feed === screen.feed;
-          return (
-            <Box key={feed} marginRight={1}>
-              <Text color={selected ? COLOR.accent : COLOR.dim} bold={selected}>
-                {selected ? `[${FEED_LABELS[feed]}]` : ` ${FEED_LABELS[feed]} `}
-              </Text>
-            </Box>
-          );
-        })}
+      <Box marginTop={1} flexDirection="column">
+        <Box>
+          {DISCOVERY_FEEDS.map((feed) => {
+            const selected = feed === screen.feed;
+            return (
+              <Box key={feed} marginRight={1}>
+                <Text color={selected ? COLOR.accent : COLOR.dim} bold={selected}>
+                  {selected ? `[${FEED_LABELS[feed]}]` : ` ${FEED_LABELS[feed]} `}
+                </Text>
+              </Box>
+            );
+          })}
+        </Box>
         <Text color={COLOR.dim}>
           {MEDIA_LABELS[screen.media]}
-          {screen.feed === "trending" ? "" : ` · ${DISCOVERY_DATE_WINDOW_LABELS[screen.dateWindow]}`}
-          {screen.feed === "ott" || screen.feed === "india" ? ` · ${providerLabel}` : ""}
+           {screen.feed === "trending" || screen.feed === "popular" || screen.feed === "charts" || screen.feed === "community" || screen.feed === "tamilmv" ? "" : ` · ${DISCOVERY_DATE_WINDOW_LABELS[screen.dateWindow]}`}
+           {screen.feed === "ott" || screen.feed === "popular" || screen.feed === "charts" ? ` · ${providerLabel}` : ""}
           {screen.languageCode ? ` · ${languageChoice.label}` : ""}
-          {screen.feed === "india"
-            ? ` · ${screen.indianTitlesOnly ? "Indian titles only" : "Available in India"}`
-            : ""}
         </Text>
       </Box>
 
@@ -488,13 +689,31 @@ export function DiscoveryContent({
           {partial ? " · partial" : ""}
         </Text>
       ) : null}
+      {compact ? <Text color={COLOR.dim}>rating/votes: IMDb or TMDB · aggregate shown as Score</Text> : null}
+      {cols < 70 ? <Text color={COLOR.dim}>rating/votes · IMDb/TMDB · Score=aggregate</Text> : null}
 
       {screen.detailsOpen && selectedEntry ? (
         <Box marginTop={1} flexGrow={1}>
-          <DiscoveryDetails entry={selectedEntry} model={model} cols={cols} />
+          <DiscoveryDetails entry={selectedEntry} model={model} cols={cols} feed={screen.feed} />
         </Box>
       ) : (
       <Box flexDirection="column" flexGrow={1} marginTop={1}>
+        {charts ? (
+          <Box width={cols}>
+            <Box width={3}><Text color={COLOR.dim}>{" ".repeat(3)}</Text></Box>
+            <Box width={12}><Text color={COLOR.dim}>{"Rank".padEnd(12)}</Text></Box>
+            <Box width={titleWidth}><Text color={COLOR.dim}>{truncate("Title", titleWidth).padEnd(titleWidth)}</Text></Box>
+            <Box width={ratingWidth}><Text color={COLOR.dim}>{"IMDb".padEnd(ratingWidth)}</Text></Box>
+            <Box width={votesWidth}><Text color={COLOR.dim}>{"Votes".padEnd(votesWidth)}</Text></Box>
+            <Box width={typeWidth}><Text color={COLOR.dim}>{"Type".padEnd(typeWidth)}</Text></Box>
+            {eventWidth > 0 ? (
+              <Box width={eventWidth}><Text color={COLOR.dim}>{"Platform".padEnd(eventWidth)}</Text></Box>
+            ) : null}
+            {languageWidth > 0 ? (
+              <Box width={languageWidth}><Text color={COLOR.dim}>{"Language".padEnd(languageWidth)}</Text></Box>
+            ) : null}
+          </Box>
+        ) : null}
         {visible.map((entry, index) => {
           const absoluteIndex = start + index;
           const selected = absoluteIndex === screen.cursor;
@@ -502,41 +721,115 @@ export function DiscoveryContent({
           const displayTitle = title
             ? `${cleanText(title.title)}${title.year ? ` (${title.year})` : ""}`
             : "Missing title metadata";
-          return (
-            <Box key={entry.event?.id ?? title?.id ?? absoluteIndex}>
-              <Text color={selected ? COLOR.accent : COLOR.dim}>
-                {selected ? ICON.pointer : " "}{" "}
-              </Text>
-              <Box width={12}>
-                <Text color={entry.event?.date ? COLOR.alt : COLOR.dim}>
-                  {entry.event?.date ?? "—"}
+          const titleRatings = title ? model.ratings.get(title.id) ?? title.ratings ?? [] : [];
+          const rating = selectPreferredRating(
+            charts ? titleRatings.filter((item) => item.system === "imdb") : titleRatings,
+          );
+          const ratingText = rating
+            ? charts
+              ? formattedScore(rating)
+              : cols < 80
+                ? formatCompactRating(rating)
+                : formatDiscoveryRating(rating).replace(" · ", medium ? " " : " · ")
+            : model.ratingsLoading ? (charts ? "…" : "IMDb …") : "NR";
+          const votesText = rating?.voteCount !== undefined
+            ? formatVoteCount(rating.voteCount)
+            : model.ratingsLoading ? "…" : "—";
+            return (
+              <Box
+                key={entry.event?.id ?? title?.id ?? absoluteIndex}
+                width={cols}
+              >
+                <Text
+                  color={selected ? COLOR.accent : COLOR.dim}
+                  backgroundColor={selected ? COLOR.selected : undefined}
+                >
+                  {selected ? ICON.pointer : " "}{" "}
                 </Text>
-              </Box>
-              <Box width={titleWidth}>
-                <Text color={selected ? COLOR.text : COLOR.alt} wrap="truncate-end">
-                  {truncate(displayTitle, titleWidth)}
-                </Text>
-              </Box>
-              <Box width={narrow ? 15 : 18}>
-                <Text color={COLOR.dim}>{truncate(eventLabel(entry), narrow ? 14 : 17)}</Text>
-              </Box>
-              {!narrow ? (
-                <>
-                  <Box width={20}>
-                    <Text color={COLOR.dim}>
-                      {truncate(discoveryLanguageSummary(entry), 19)}
+                <Box width={12}>
+                  <Text
+                    color={selected ? COLOR.text : entry.event?.date ? COLOR.alt : COLOR.dim}
+                    backgroundColor={selected ? COLOR.selected : undefined}
+                  >
+                    {(screen.feed === "charts" || screen.feed === "community"
+                      ? `#${absoluteIndex + 1}`
+                      : entry.event?.date ?? "—").padEnd(12)}
+                  </Text>
+                </Box>
+                <Box width={titleWidth}>
+                  <Text
+                    color={selected ? COLOR.text : COLOR.alt}
+                    backgroundColor={selected ? COLOR.selected : undefined}
+                    wrap="truncate-end"
+                  >
+                    {truncate(displayTitle, titleWidth).padEnd(titleWidth)}
+                  </Text>
+                </Box>
+                <Box width={ratingWidth}>
+                  <Text
+                    color={selected ? COLOR.text : rating ? COLOR.alt : COLOR.dim}
+                    backgroundColor={selected ? COLOR.selected : undefined}
+                  >
+                    {truncate(ratingText, ratingWidth - 1).padEnd(ratingWidth)}
+                  </Text>
+                </Box>
+                {votesWidth > 0 ? (
+                  <Box width={votesWidth}>
+                    <Text
+                      color={selected ? COLOR.text : rating?.voteCount !== undefined ? COLOR.alt : COLOR.dim}
+                      backgroundColor={selected ? COLOR.selected : undefined}
+                    >
+                      {truncate(votesText, votesWidth - 1).padEnd(votesWidth)}
                     </Text>
                   </Box>
-                  <Box width={16}>
-                    <Text color={COLOR.dim}>{truncate(sourceNames(entry), 15)}</Text>
+                ) : null}
+                {typeWidth > 0 ? (
+                  <Box width={typeWidth}>
+                    <Text
+                      color={selected ? COLOR.text : COLOR.dim}
+                      backgroundColor={selected ? COLOR.selected : undefined}
+                    >
+                      {(title ? MEDIA_TYPE_LABELS[title.mediaType] : "—").padEnd(typeWidth)}
+                    </Text>
                   </Box>
+                ) : null}
+                {eventWidth > 0 ? (
+                  <Box width={eventWidth}>
+                    <Text
+                      color={selected ? COLOR.text : COLOR.dim}
+                      backgroundColor={selected ? COLOR.selected : undefined}
+                    >
+                      {truncate(eventLabel(entry, screen.feed), eventWidth - 1).padEnd(eventWidth)}
+                    </Text>
+                  </Box>
+                ) : null}
+                {languageWidth > 0 ? (
+                  <>
+                    <Box width={languageWidth}>
+                      <Text
+                        color={selected ? COLOR.text : COLOR.dim}
+                        backgroundColor={selected ? COLOR.selected : undefined}
+                      >
+                        {truncate(discoveryLanguageSummary(entry), languageWidth - 1).padEnd(languageWidth)}
+                      </Text>
+                    </Box>
+                    {sourceWidth > 0 ? (
+                      <Box width={sourceWidth}>
+                        <Text
+                          color={selected ? COLOR.text : COLOR.dim}
+                          backgroundColor={selected ? COLOR.selected : undefined}
+                        >
+                          {truncate(sourceNames(entry, screen.feed), sourceWidth - 1).padEnd(sourceWidth)}
+                        </Text>
+                      </Box>
+                    ) : null}
                 </>
               ) : null}
             </Box>
           );
         })}
         {!model.loading && entries.length === 0 ? (
-          <DiscoveryEmpty model={model} baseCount={baseEntries.length} />
+          <DiscoveryEmpty model={model} baseCount={baseEntries.length} cols={cols} />
         ) : null}
       </Box>
       )}
@@ -552,6 +845,7 @@ export function Discover({ active, visible = true }: { active: boolean; visible?
   const { config, cols, listRows, submitQuery } = useStore();
   const [screen, dispatch] = useDiscoveryScreenState();
   const model = useDiscovery(config, screen.feed, screen.dateWindow, active);
+  const contentCols = Math.max(1, cols - 2);
   if (!visible) return null;
   return (
     <DiscoveryContent
@@ -559,7 +853,7 @@ export function Discover({ active, visible = true }: { active: boolean; visible?
       screen={screen}
       dispatch={dispatch}
       active={active}
-      cols={cols}
+      cols={contentCols}
       listRows={listRows}
       onSearch={submitQuery}
     />

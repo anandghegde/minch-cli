@@ -13,6 +13,7 @@ import type {
   ReleaseEvent,
   SourceEvidence,
 } from "./types";
+import { mergeRatings } from "./ratings/types";
 
 export interface CanonicalIdentityDiagnostics {
   /** Ambiguous external-ID or title/year buckets deliberately left separate. */
@@ -45,8 +46,12 @@ export interface DiscoveryFeedEntry {
 
 export interface DiscoveryFeedClassification {
   trending: DiscoveryFeedEntry[];
+  popular: DiscoveryFeedEntry[];
+  charts: DiscoveryFeedEntry[];
+  community: DiscoveryFeedEntry[];
   ott: DiscoveryFeedEntry[];
   bluray: DiscoveryFeedEntry[];
+  tamilmv: DiscoveryFeedEntry[];
   india: DiscoveryFeedEntry[];
 }
 
@@ -219,6 +224,7 @@ function mergeTitles(members: CatalogTitle[]): CatalogTitle {
   const popularity = Math.max(
     ...members.flatMap((title) => title.popularity === undefined ? [] : [title.popularity]),
   );
+  const ratings = mergeRatings(...members.map((title) => title.ratings));
   return {
     id: canonicalId(members, chosen),
     title: chosen.title,
@@ -246,11 +252,18 @@ function mergeTitles(members: CatalogTitle[]): CatalogTitle {
     ...([...new Set(members.flatMap((title) => title.genreLabels ?? []))].length > 0
       ? { genreLabels: [...new Set(members.flatMap((title) => title.genreLabels ?? []))].sort() }
       : {}),
+    ...([...new Set(members.flatMap((title) => title.providerIds ?? []))].length > 0
+      ? { providerIds: [...new Set(members.flatMap((title) => title.providerIds ?? []))].sort() }
+      : {}),
+    ...([...new Set(members.flatMap((title) => title.providerLabels ?? []))].length > 0
+      ? { providerLabels: [...new Set(members.flatMap((title) => title.providerLabels ?? []))].sort() }
+      : {}),
     ...(firstDefined(ordered, (title) => title.posterUrl) !== undefined
       ? { posterUrl: firstDefined(ordered, (title) => title.posterUrl) }
       : {}),
     ...(presentImages.length > 0 ? { images: Object.fromEntries(presentImages) } : {}),
     ...(Number.isFinite(popularity) ? { popularity } : {}),
+    ...(ratings.length > 0 ? { ratings } : {}),
   };
 }
 
@@ -439,7 +452,24 @@ export function classifyDiscoveryFeeds(
 ): DiscoveryFeedClassification {
   const titleById = new Map(identities.titles.map((title) => [title.id, title]));
   const trendingIds = new Set<string>();
+  const popularIds = new Set<string>();
+  const chartIds = new Set<string>();
+  const communityIds = new Set<string>();
   for (const snapshot of snapshots) {
+    const ids = snapshot.feedKind === "provider_popular"
+      ? popularIds
+      : snapshot.feedKind === "streaming_charts"
+        ? chartIds
+        : snapshot.feedKind === "community_popular"
+          ? communityIds
+        : undefined;
+    if (ids) {
+      for (const title of snapshot.titles) {
+        const canonicalId = identities.canonicalIdBySourceTitleId.get(title.id);
+        if (canonicalId) ids.add(canonicalId);
+      }
+      continue;
+    }
     if (snapshot.source !== "tmdb" || snapshot.feedKind !== "trending") continue;
     for (const title of snapshot.titles) {
       const canonicalId = identities.canonicalIdBySourceTitleId.get(title.id);
@@ -454,8 +484,12 @@ export function classifyDiscoveryFeeds(
     event.kind === "bluray" ||
     event.kind === "uhd_bluray" ||
     (options.includeGenericPhysical === true && event.kind === "physical"));
+  const tamilmvEvents = events.filter((event) =>
+    event.evidence.some((evidence) => evidence.source === "tamilmv"));
   const indiaEvents = events.filter((event) => {
     if (event.region !== "IN") return false;
+    // Keep TamilMV listing events on their dedicated feed only.
+    if (event.evidence.some((evidence) => evidence.source === "tamilmv")) return false;
     if (!options.indianTitlesOnly) return true;
     return titleById.get(event.titleId)?.originCountries.includes("IN") === true;
   });
@@ -463,8 +497,18 @@ export function classifyDiscoveryFeeds(
     trending: [...trendingIds]
       .sort()
       .flatMap((id) => titleById.get(id) ? [{ title: titleById.get(id)! }] : []),
+    popular: [...popularIds]
+      .sort()
+      .flatMap((id) => titleById.get(id) ? [{ title: titleById.get(id)! }] : []),
+    charts: [...chartIds]
+      .sort()
+      .flatMap((id) => titleById.get(id) ? [{ title: titleById.get(id)! }] : []),
+    community: [...communityIds]
+      .sort()
+      .flatMap((id) => titleById.get(id) ? [{ title: titleById.get(id)! }] : []),
     ott: entriesForEvents(ottEvents, titleById),
     bluray: entriesForEvents(blurayEvents, titleById),
+    tamilmv: entriesForEvents(tamilmvEvents, titleById),
     india: entriesForEvents(indiaEvents, titleById),
   };
 }
@@ -512,7 +556,9 @@ export function filterDiscoveryEntries(
     }
     if (
       providerIds.size > 0 &&
-      (!entry.event?.providerId || !providerIds.has(entry.event.providerId))
+      (!entry.event?.providerId
+        ? !entry.title?.providerIds?.some((providerId) => providerIds.has(providerId))
+        : !providerIds.has(entry.event.providerId))
     ) {
       return false;
     }
@@ -613,6 +659,8 @@ const DISCOVERY_SOURCES: DiscoverySource[] = [
   "bluray",
   "trakt",
   "streaming-availability",
+  "apify",
+  "tamilmv",
 ];
 
 function emptyContributions(): Record<DiscoverySource, DiscoverySourceContribution> {

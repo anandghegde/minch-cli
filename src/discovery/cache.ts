@@ -4,6 +4,7 @@ import {
   type DiscoveryRequest,
 } from "./request";
 import type { DiscoverySource } from "./types";
+import { normalizeRating } from "./ratings/types";
 import { parseDateOnly } from "./dates";
 
 export const DISCOVERY_CACHE_VERSION = 1 as const;
@@ -73,16 +74,22 @@ const SOURCES = new Set<DiscoverySource>([
   "bluray",
   "trakt",
   "streaming-availability",
+  "apify",
+  "tamilmv",
 ]);
 const MEDIA_TYPES = new Set(["movie", "series", "season", "episode"]);
 const FEED_KINDS = new Set([
   "trending",
+  "provider_popular",
+  "streaming_charts",
+  "community_popular",
   "streaming_added",
   "streaming_upcoming",
   "digital",
   "physical",
   "bluray",
   "provider_dictionary",
+  "tamilmv_latest",
 ]);
 const RELEASE_KINDS = new Set([
   "streaming_added",
@@ -116,6 +123,8 @@ function validTitle(value: unknown): boolean {
     Array.isArray(value.genreIds) &&
     value.genreIds.every(isFiniteNumber) &&
     optional(value.genreLabels, isStringArray) &&
+    optional(value.providerIds, isStringArray) &&
+    optional(value.providerLabels, isStringArray) &&
     optional(value.posterUrl, isString) &&
     optional(value.images, (images) =>
       isRecord(images) &&
@@ -123,7 +132,9 @@ function validTitle(value: unknown): boolean {
       optional(images.horizontalPoster, isString) &&
       optional(images.horizontalBackdrop, isString) &&
       optional(images.verticalBackdrop, isString)) &&
-    optional(value.popularity, isFiniteNumber)
+    optional(value.popularity, isFiniteNumber) &&
+    optional(value.ratings, (ratings) =>
+      Array.isArray(ratings) && ratings.every((rating) => !!normalizeRating(rating as never)))
   );
 }
 

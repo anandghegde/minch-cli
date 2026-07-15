@@ -49,12 +49,23 @@ export interface RelevanceConfig {
   strictAnd?: boolean;
 }
 
-export type DiscoveryAdapterId = "tmdb" | "bluray" | "streaming-availability";
+export type DiscoveryAdapterId =
+  | "tmdb"
+  | "bluray"
+  | "streaming-availability"
+  | "apify"
+  | "tamilmv";
+export type ImdbRatingProvider = "off" | "imdb-dataset" | "mdblist";
 
 export interface DiscoveryConfig {
   tmdb?: { readToken?: string };
   streamingAvailability?: { apiKey?: string };
+  apify?: { apiToken?: string };
+  firecrawl?: { apiKey?: string };
+  tamilmv?: { baseUrl?: string };
   disabledSources?: DiscoveryAdapterId[];
+  ratingProvider?: ImdbRatingProvider;
+  mdblist?: { apiKey?: string };
 }
 
 export interface Config {
@@ -221,12 +232,41 @@ function coerceDiscovery(raw: unknown): DiscoveryConfig | undefined {
       : "";
     if (apiKey) out.streamingAvailability = { apiKey };
   }
+  if (isRecord(raw.apify)) {
+    const apiToken = typeof raw.apify.apiToken === "string" ? raw.apify.apiToken.trim() : "";
+    if (apiToken) out.apify = { apiToken };
+  }
+  if (isRecord(raw.firecrawl)) {
+    const apiKey = typeof raw.firecrawl.apiKey === "string" ? raw.firecrawl.apiKey.trim() : "";
+    if (apiKey) out.firecrawl = { apiKey };
+  }
+  if (isRecord(raw.tamilmv)) {
+    const baseUrl = typeof raw.tamilmv.baseUrl === "string" ? raw.tamilmv.baseUrl.trim() : "";
+    if (baseUrl) {
+      try {
+        const parsed = new URL(baseUrl);
+        if (parsed.protocol === "https:") out.tamilmv = { baseUrl: parsed.href };
+      } catch {
+        // drop invalid base URLs
+      }
+    }
+  }
   if (Array.isArray(raw.disabledSources)) {
     const disabledSources = [...new Set(raw.disabledSources.filter(
       (source): source is DiscoveryAdapterId =>
-        source === "tmdb" || source === "bluray" || source === "streaming-availability",
+        source === "tmdb" ||
+        source === "bluray" ||
+        source === "streaming-availability" ||
+        source === "apify" ||
+        source === "tamilmv",
     ))];
     if (disabledSources.length > 0) out.disabledSources = disabledSources;
+  }
+  if (raw.ratingProvider === "off" || raw.ratingProvider === "imdb-dataset" ||
+      raw.ratingProvider === "mdblist") out.ratingProvider = raw.ratingProvider;
+  if (isRecord(raw.mdblist)) {
+    const apiKey = typeof raw.mdblist.apiKey === "string" ? raw.mdblist.apiKey.trim() : "";
+    if (apiKey) out.mdblist = { apiKey };
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

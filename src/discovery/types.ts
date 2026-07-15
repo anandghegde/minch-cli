@@ -14,12 +14,32 @@ export type DatePrecision = "day" | "month" | "year" | "unknown";
 export type EvidenceConfidence = "exact" | "source_claim" | "inferred";
 export type ReleaseStatus = "past" | "today" | "upcoming" | "unknown";
 
+export type RatingSystem = "imdb" | "tmdb" | "aggregate";
+
+export type RatingProvider =
+  | "imdb-dataset"
+  | "mdblist"
+  | "tmdb"
+  | "streaming-availability";
+
+export interface CatalogRating {
+  system: RatingSystem;
+  provider: RatingProvider;
+  value: number;
+  scale: 10 | 100;
+  voteCount?: number;
+  /** Unix milliseconds when this value was observed. */
+  observedAt: number;
+}
+
 /** Trakt remains a dormant value while ADR 002's no-go decision is in force. */
 export type DiscoverySource =
   | "tmdb"
   | "bluray"
   | "trakt"
-  | "streaming-availability";
+  | "streaming-availability"
+  | "apify"
+  | "tamilmv";
 
 /** ISO 3166-1 alpha-2 when known; `ZZ` is the explicit unknown-region sentinel. */
 export type RegionCode = string;
@@ -41,6 +61,8 @@ export interface CatalogTitle {
   originCountries: string[];
   genreIds: number[];
   genreLabels?: string[];
+  providerIds?: string[];
+  providerLabels?: string[];
   posterUrl?: string;
   images?: {
     verticalPoster?: string;
@@ -49,6 +71,7 @@ export interface CatalogTitle {
     verticalBackdrop?: string;
   };
   popularity?: number;
+  ratings?: CatalogRating[];
 }
 
 export interface ReleaseEvent {

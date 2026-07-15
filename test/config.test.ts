@@ -247,4 +247,18 @@ describe("config persistence", () => {
     const cfg = await loadConfig();
     expect(cfg.relevance).toEqual({ preferQuality: true, strictAnd: true });
   });
+
+  it("loads only supported rating provider settings and a trimmed MDBList key", async () => {
+    await fs.mkdir(configFile.replace(/\/[^/]+$/, ""), { recursive: true });
+    await fs.writeFile(configFile, JSON.stringify({
+      firstRunDone: true,
+      sources: {},
+      torznab: [],
+      discovery: { ratingProvider: "mdblist", mdblist: { apiKey: " owned " } },
+    }), "utf8");
+    expect((await loadConfig()).discovery).toMatchObject({
+      ratingProvider: "mdblist",
+      mdblist: { apiKey: "owned" },
+    });
+  });
 });

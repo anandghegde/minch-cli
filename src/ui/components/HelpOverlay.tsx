@@ -3,6 +3,7 @@ import {
   DISCOVERY_CREDITS_NOTICE,
   DISCOVERY_SOURCE_CLAIM_NOTICE,
   JUSTWATCH_ATTRIBUTION_NOTICE,
+  IMDB_REQUIRED_NOTICE,
   TMDB_REQUIRED_NOTICE,
 } from "../../discovery/attribution";
 import { COLOR } from "../theme";
@@ -45,11 +46,10 @@ const GROUPS: { title: string; hints: { keys: string; label: string }[] }[] = [
     title: "Discover",
     hints: [
       { keys: "\u2190 \u2192", label: "Switch feed" },
-      { keys: "1\u20134", label: "Jump to feed" },
+      { keys: "1-6", label: "Jump to feed" },
       { keys: "m", label: "Cycle media type" },
-      { keys: "p", label: "Cycle India provider" },
+      { keys: "p", label: "Cycle provider" },
       { keys: "l", label: "Cycle language" },
-      { keys: "i", label: "Indian titles only" },
       { keys: "t", label: "Cycle date window" },
       { keys: "enter", label: "Open / close details" },
       { keys: "s", label: "Search selected title" },
@@ -69,6 +69,7 @@ const GROUPS: { title: string; hints: { keys: string; label: string }[] }[] = [
     title: "Debrid tabs",
     hints: [
       { keys: "l / enter", label: "Download to disk" },
+      { keys: "y", label: "Copy download link" },
       { keys: "c", label: "Cancel download" },
       { keys: "o", label: "Open finished file" },
       { keys: "r", label: "Refresh now" },
@@ -92,6 +93,7 @@ export const DISCOVERY_HELP_FOOTNOTES = [
   DISCOVERY_CREDITS_NOTICE,
   TMDB_REQUIRED_NOTICE,
   JUSTWATCH_ATTRIBUTION_NOTICE,
+  IMDB_REQUIRED_NOTICE,
 ] as const;
 
 export function HelpOverlay() {

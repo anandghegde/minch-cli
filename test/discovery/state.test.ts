@@ -202,6 +202,23 @@ describe("partial discovery source states", () => {
     });
   });
 
+  it("classifies paid-source billing failures as quota-paused", async () => {
+    const service: DiscoveryService = {
+      load: vi.fn(async (): Promise<DiscoveryLoadResult> => ({
+        cacheState: "miss",
+        refreshing: false,
+        error: new HttpError(402, "Paid Actor billing is unavailable"),
+      })),
+    };
+
+    await expect(
+      loadDiscoverySourceState(service, adapter("apify"), request()),
+    ).resolves.toMatchObject({
+      status: "quota-paused",
+      warnings: [{ code: "quota-paused" }],
+    });
+  });
+
   it.each([401, 403])("marks HTTP %s as auth-failed while retaining cache", async (status) => {
     const cached = snapshot("streaming-availability", "cached-streaming");
     const service: DiscoveryService = {

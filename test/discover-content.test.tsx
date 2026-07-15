@@ -1,4 +1,5 @@
 import { createElement, useReducer } from "react";
+import { Box } from "ink";
 import { render } from "ink-testing-library";
 import { describe, expect, it, vi } from "vitest";
 import { defaultConfig, type Config } from "../src/config/config";
@@ -11,11 +12,15 @@ import {
   DISCOVERY_SOURCE_CLAIM_NOTICE,
   JUSTWATCH_ATTRIBUTION_NOTICE,
   TMDB_REQUIRED_NOTICE,
+  IMDB_REQUIRED_NOTICE,
 } from "../src/discovery/attribution";
 import {
   DiscoveryContent,
+  dedupeBlurayEntries,
   discoveryLanguageSummary,
   discoverySearchQuery,
+  formatDiscoveryRating,
+  formatVoteCount,
 } from "../src/ui/components/Discover";
 import {
   INITIAL_DISCOVERY_SCREEN_STATE,
@@ -129,12 +134,171 @@ function model(overrides: Partial<DiscoveryUiModel> = {}): DiscoveryUiModel {
     total: 2,
     providers: [],
     attributions: [],
+    ratings: new Map(),
+    ratingsLoading: false,
+    ratingsExactCount: 0,
+    ratingsFallbackCount: 0,
+    ratingsUnresolvedCount: 1,
     refresh: vi.fn(),
     ...overrides,
   };
 }
 
 describe("Discover canonical rows and source status", () => {
+  it("deduplicates Blu-ray rows by title while preserving ranked order", () => {
+    const title = (id: string, name: string, year: number): CatalogTitle => ({
+      id,
+      title: name,
+      year,
+      mediaType: "movie",
+      originCountries: [],
+      genreIds: [],
+    });
+    const event = (id: string, titleId: string): ReleaseEvent => ({
+      id,
+      titleId,
+      kind: "bluray",
+      region: "US",
+      date: "2026-07-10",
+      datePrecision: "day",
+      status: "today",
+      firstObservedAt: NOW,
+      lastObservedAt: NOW,
+      evidence: [],
+    });
+    const entries = dedupeBlurayEntries([
+      { title: title("first", "The Film!", 2026), event: event("first-event", "first") },
+      { title: title("second", "the film", 2026), event: event("second-event", "second") },
+      { title: title("next-year", "The Film", 2027), event: event("next-event", "next-year") },
+    ]);
+
+    expect(entries.map((entry) => entry.event?.id)).toEqual(["first-event", "next-event"]);
+  });
+
+  it("formats exact, fallback, and compact vote counts without relabeling", () => {
+    expect(formatVoteCount(146_281)).toBe("146K");
+    expect(formatVoteCount(1_420_000)).toBe("1.4M");
+    expect(formatDiscoveryRating({
+      system: "imdb", provider: "imdb-dataset", value: 8.4,
+      scale: 10, voteCount: 146_281, observedAt: NOW,
+    })).toBe("IMDb 8.4 · 146K");
+    expect(formatDiscoveryRating({
+      system: "tmdb", provider: "tmdb", value: 7.9,
+      scale: 10, voteCount: 12_000, observedAt: NOW,
+    })).toBe("TMDB 7.9 · 12K");
+  });
+
+  it("renders responsive rating columns and exact details", () => {
+    const base = model({ sourceStates: [] });
+    const titleId = base.aggregation.titles[0]!.id;
+    const rating = {
+      system: "imdb" as const, provider: "imdb-dataset" as const,
+      value: 8.4, scale: 10 as const, voteCount: 146_281, observedAt: NOW,
+    };
+    base.ratings = new Map([[titleId, [rating]]]);
+    const screen = { ...INITIAL_DISCOVERY_SCREEN_STATE, feed: "ott" as const, dateWindow: "all" as const };
+    for (const [cols, expected] of [[120, "IMDb 8.4 · 146K"], [90, "IMDb 8.4 146K"], [75, "8.4/146K"], [60, "8.4/146K"]] as const) {
+      const view = render(createElement(DiscoveryContent, {
+        model: base, screen, dispatch: vi.fn(), active: false, cols, listRows: 10,
+      }));
+      expect(view.lastFrame()).toContain(expected);
+      expect((view.lastFrame() ?? "").split("\n").every((line) => line.length <= cols)).toBe(true);
+      view.unmount();
+    }
+    const details = render(createElement(DiscoveryContent, {
+      model: base,
+      screen: { ...screen, detailsOpen: true },
+      dispatch: vi.fn(), active: false, cols: 120, listRows: 16,
+    }));
+    expect(details.lastFrame()).toContain("IMDb: 8.4/10 · 146,281 votes");
+    expect(details.lastFrame()).toContain("Rating provider: Official IMDb dataset");
+    expect(details.lastFrame()).toContain(IMDB_REQUIRED_NOTICE);
+    details.unmount();
+  });
+
+  it("shows IMDb rating, votes, and media type instead of Apify on India Charts", () => {
+    const titles: CatalogTitle[] = [
+      {
+        id: "apify:flixpatrol:netflix:series:chart-show",
+        title: "Chart Show",
+        mediaType: "series",
+        originCountries: [],
+        genreIds: [],
+        providerIds: ["netflix"],
+        providerLabels: ["Netflix"],
+      },
+      {
+        id: "apify:flixpatrol:netflix:movie:chart-film",
+        title: "Chart Film",
+        mediaType: "movie",
+        originCountries: [],
+        genreIds: [],
+        providerIds: ["netflix"],
+        providerLabels: ["Netflix"],
+      },
+    ];
+    const snapshot: DiscoverySnapshot = {
+      source: "apify",
+      feedKind: "streaming_charts",
+      titles,
+      events: [],
+      fetchedAt: NOW,
+      warnings: [],
+    };
+    const aggregation = aggregateDiscoverySnapshots([snapshot]);
+    const rating = {
+      system: "imdb" as const,
+      provider: "imdb-dataset" as const,
+      value: 8.4,
+      scale: 10 as const,
+      voteCount: 146_281,
+      observedAt: NOW,
+    };
+    const ratings = new Map(aggregation.titles.map((title) => [title.id, [rating]]));
+    const view = render(createElement(DiscoveryContent, {
+      model: model({ aggregation, sourceStates: [], ratings }),
+      screen: { ...INITIAL_DISCOVERY_SCREEN_STATE, feed: "charts" },
+      dispatch: vi.fn(),
+      active: false,
+      cols: 120,
+      listRows: 12,
+    }));
+    const frame = view.lastFrame() ?? "";
+
+    expect(frame).toContain("IMDb");
+    expect(frame).toContain("Votes");
+    expect(frame).toContain("Type");
+    expect(frame).toContain("8.4");
+    expect(frame).toContain("146K");
+    expect(frame).toContain("Movie");
+    expect(frame).toContain("TV");
+    expect(frame).not.toContain("Apify");
+    expect(frame.split("\n").every((line) => line.length <= 120)).toBe(true);
+    view.unmount();
+  });
+
+  it("uses the fallback while exact loading and ellipsis only without a fallback", () => {
+    const fallback = model({ sourceStates: [], ratingsLoading: true });
+    const titleId = fallback.aggregation.titles[0]!.id;
+    fallback.ratings = new Map([[titleId, [{
+      system: "tmdb", provider: "tmdb", value: 7.9, scale: 10,
+      voteCount: 12_000, observedAt: NOW,
+    }]]]);
+    const screen = { ...INITIAL_DISCOVERY_SCREEN_STATE, feed: "ott" as const, dateWindow: "all" as const };
+    const withFallback = render(createElement(DiscoveryContent, {
+      model: fallback, screen, dispatch: vi.fn(), active: false, cols: 120, listRows: 10,
+    }));
+    expect(withFallback.lastFrame()).toContain("TMDB 7.9 · 12K");
+    expect(withFallback.lastFrame()).not.toContain("IMDb …");
+    withFallback.unmount();
+    fallback.ratings = new Map();
+    const pending = render(createElement(DiscoveryContent, {
+      model: fallback, screen, dispatch: vi.fn(), active: false, cols: 120, listRows: 10,
+    }));
+    expect(pending.lastFrame()).toContain("IMDb …");
+    pending.unmount();
+  });
+
   it("renders release fields and partial source states without torrent fields", () => {
     const screen: DiscoveryScreenState = {
       ...INITIAL_DISCOVERY_SCREEN_STATE,
@@ -414,6 +578,8 @@ describe("Discover canonical rows and source status", () => {
     expect(offline.lastFrame()).toContain("offline or unavailable");
     expect(offline.lastFrame()).toContain("no cached discovery data");
     expect(offline.lastFrame()).toContain("Results unavailable or incomplete");
+    expect(offline.lastFrame()).toContain("Blu-ray.com RSS: offline");
+    expect(offline.lastFrame()).toContain("TMDB Physical: offline");
     expect(offline.lastFrame()).not.toContain("0 results");
     offline.unmount();
   });
@@ -553,26 +719,6 @@ describe("Discover bounded load planning", () => {
   }
 
   it("plans only the adapters needed for each feed and date direction", () => {
-    const india = buildDiscoveryLoadTargets(
-      defaultConfig,
-      "india",
-      "30d",
-      ledger(),
-      "2026-07-10",
-    );
-    expect(india.map((target) => target.key)).toEqual([
-      "streaming-availability:added",
-      "streaming-availability:providers",
-      "tmdb:digital",
-      "tmdb:physical",
-    ]);
-    expect(india[0]!.request.dateRange).toEqual({
-      start: "2026-06-11",
-      end: "2026-07-10",
-      direction: "past",
-    });
-    expect(india[0]!.request.pageLimit).toBe(4);
-
     const upcoming = buildDiscoveryLoadTargets(
       defaultConfig,
       "ott",
@@ -591,6 +737,23 @@ describe("Discover bounded load planning", () => {
 
     expect(buildDiscoveryLoadTargets(defaultConfig, "bluray", "30d", ledger()))
       .toHaveLength(2);
+    expect(buildDiscoveryLoadTargets(defaultConfig, "charts", "30d", ledger()))
+      .toMatchObject([
+        {
+          key: "apify:flixpatrol:netflix",
+          label: "FlixPatrol Netflix India",
+          request: { region: "IN", feedKind: "streaming_charts", providerIds: ["netflix"] },
+        },
+        { key: "apify:flixpatrol:prime", request: { providerIds: ["prime"] } },
+        { key: "apify:flixpatrol:hotstar", request: { providerIds: ["hotstar"] } },
+        { key: "apify:flixpatrol:zee5", request: { providerIds: ["zee5"] } },
+      ]);
+    expect(buildDiscoveryLoadTargets(defaultConfig, "community", "30d", ledger()))
+      .toMatchObject([{
+        key: "apify:letterboxd-community",
+        label: "Letterboxd Weekly Popular",
+        request: { region: "ZZ", feedKind: "community_popular" },
+      }]);
     expect(discoveryDateSelection("7d", "2026-07-10")).toEqual({
       direction: "past",
       range: { start: "2026-07-04", end: "2026-07-10" },
@@ -652,6 +815,20 @@ describe("Discover bounded load planning", () => {
       feedKind: "bluray" as const,
       fetchedAt: NOW + 2,
     };
+    const charts = {
+      ...fixtureSnapshot(),
+      source: "apify" as const,
+      feedKind: "streaming_charts" as const,
+      events: [],
+      fetchedAt: NOW + 3,
+    };
+    const community = {
+      ...fixtureSnapshot(),
+      source: "apify" as const,
+      feedKind: "community_popular" as const,
+      events: [],
+      fetchedAt: NOW + 4,
+    };
     const requestBase = {
       region: "IN",
       mediaTypes: ["movie" as const],
@@ -682,6 +859,20 @@ describe("Discover bounded load planning", () => {
           expiresAt: NOW + 1,
           staleUntil: NOW + 10_000,
         },
+        charts: {
+          source: "apify",
+          request: { ...requestBase, feedKind: "streaming_charts" },
+          snapshot: charts,
+          expiresAt: NOW + 1,
+          staleUntil: NOW + 10_000,
+        },
+        community: {
+          source: "apify",
+          request: { ...requestBase, region: "ZZ", feedKind: "community_popular" },
+          snapshot: community,
+          expiresAt: NOW + 1,
+          staleUntil: NOW + 10_000,
+        },
         expired: {
           source: "streaming-availability",
           request: { ...requestBase, feedKind: "streaming_added" },
@@ -697,12 +888,14 @@ describe("Discover bounded load planning", () => {
       "streaming_added",
       "streaming_upcoming",
     ]);
-    expect(cachedSnapshotsForDiscoveryFeed(document, "india", NOW)
-      .some((snapshot) => snapshot.source === "bluray")).toBe(false);
     expect(cachedSnapshotsForDiscoveryFeed(document, "bluray", NOW)
       .map((snapshot) => snapshot.source)).toEqual(["bluray"]);
     expect(cachedSnapshotsForDiscoveryFeed(document, "bluray", NOW, ["bluray"]))
       .toEqual([]);
+    expect(cachedSnapshotsForDiscoveryFeed(document, "charts", NOW)
+      .map((snapshot) => snapshot.feedKind)).toEqual(["streaming_charts"]);
+    expect(cachedSnapshotsForDiscoveryFeed(document, "community", NOW)
+      .map((snapshot) => snapshot.feedKind)).toEqual(["community_popular"]);
   });
 
   it("marks explicitly disabled load targets unconfigured even when keys exist", () => {
@@ -715,7 +908,7 @@ describe("Discover bounded load planning", () => {
       },
     };
     const targets = [
-      ...buildDiscoveryLoadTargets(configured, "india", "7d", ledger(), "2026-07-10"),
+      ...buildDiscoveryLoadTargets(configured, "ott", "7d", ledger(), "2026-07-10"),
       ...buildDiscoveryLoadTargets(configured, "bluray", "7d", ledger(), "2026-07-10"),
     ];
 
@@ -724,6 +917,46 @@ describe("Discover bounded load planning", () => {
 });
 
 describe("Discover interactions", () => {
+  it("keeps feed subtabs visible when a populated feed fills the viewport", () => {
+    const snapshot = fixtureSnapshot();
+    snapshot.titles = Array.from({ length: 20 }, (_, index) => ({
+      ...snapshot.titles[0]!,
+      id: `streaming:title-${index}`,
+      title: `Example Film ${index}`,
+    }));
+    snapshot.events = snapshot.titles.map((title, index) => ({
+      ...snapshot.events[0]!,
+      id: `streaming:event-${index}`,
+      titleId: title.id,
+    }));
+    const uiModel = model({ aggregation: aggregateDiscoverySnapshots([snapshot]) });
+    const screen = {
+      ...INITIAL_DISCOVERY_SCREEN_STATE,
+      feed: "ott" as const,
+    };
+    const view = render(createElement(
+      Box,
+      { height: 12, flexDirection: "column" },
+      createElement(DiscoveryContent, {
+        model: uiModel,
+        screen,
+        dispatch: vi.fn(),
+        active: false,
+        cols: 78,
+        listRows: 12,
+      }),
+    ));
+
+    const frame = view.lastFrame() ?? "";
+    expect(frame).toContain("Trending");
+    expect(frame).toContain("[OTT]");
+    expect(frame).toContain("Blu-ray");
+    expect(frame).toContain("Popular");
+    expect(frame).toContain("India Charts");
+    expect(frame).toContain("Community");
+    view.unmount();
+  });
+
   it("switches feed, media type, and date window through the live reducer", async () => {
     const view = render(createElement(Harness, { uiModel: model() }));
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -737,6 +970,17 @@ describe("Discover interactions", () => {
     view.stdin.write("t");
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(view.lastFrame()).toContain("Upcoming 7d");
+    view.unmount();
+  });
+
+  it("exposes Community as the sixth Discover subtab", async () => {
+    const view = render(createElement(Harness, { uiModel: model() }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    view.stdin.write("6");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(view.lastFrame()).toContain("[Community]");
+    expect(view.lastFrame()).not.toContain("All providers");
     view.unmount();
   });
 
@@ -782,114 +1026,6 @@ describe("Discover interactions", () => {
     view.unmount();
   });
 
-  it("defaults India to regional availability and narrows to Indian origin on i", async () => {
-    const streaming = fixtureSnapshot();
-    const globalTitle: CatalogTitle = {
-      ...streaming.titles[0]!,
-      id: "streaming:global",
-      title: "Global Title in India",
-      originCountries: ["US"],
-      tmdbId: 2,
-    };
-    streaming.titles[0] = { ...streaming.titles[0]!, tmdbId: 1 };
-    streaming.titles.push(globalTitle);
-    streaming.events.push({
-      ...streaming.events[0]!,
-      id: "streaming:global-event",
-      titleId: globalTitle.id,
-    });
-    const digitalTitle: CatalogTitle = {
-      ...streaming.titles[0]!,
-      id: "tmdb:digital",
-      title: "Indian Digital",
-      tmdbId: 3,
-    };
-    const physicalTitle: CatalogTitle = {
-      ...digitalTitle,
-      id: "tmdb:physical",
-      title: "Indian Physical",
-      tmdbId: 4,
-    };
-    const regional: DiscoverySnapshot = {
-      source: "tmdb",
-      feedKind: "digital",
-      titles: [digitalTitle, physicalTitle],
-      events: [
-        {
-          ...streaming.events[0]!,
-          id: "tmdb:digital-event",
-          titleId: digitalTitle.id,
-          kind: "digital",
-          providerId: undefined,
-          providerLabel: undefined,
-          formatLabel: "Digital",
-          evidence: [{ source: "tmdb", observedAt: NOW, confidence: "exact" }],
-        },
-        {
-          ...streaming.events[0]!,
-          id: "tmdb:physical-event",
-          titleId: physicalTitle.id,
-          kind: "physical",
-          providerId: undefined,
-          providerLabel: undefined,
-          formatLabel: "Physical",
-          evidence: [{ source: "tmdb", observedAt: NOW, confidence: "exact" }],
-        },
-      ],
-      fetchedAt: NOW,
-      warnings: [],
-    };
-    const discTitle: CatalogTitle = {
-      ...digitalTitle,
-      id: "bluray:indian",
-      title: "Unknown Region Indian Disc",
-      tmdbId: 5,
-    };
-    const bluray: DiscoverySnapshot = {
-      source: "bluray",
-      feedKind: "bluray",
-      titles: [discTitle],
-      events: [{
-        ...streaming.events[0]!,
-        id: "bluray:event",
-        titleId: discTitle.id,
-        kind: "bluray",
-        region: "ZZ",
-        providerId: undefined,
-        providerLabel: undefined,
-        formatLabel: "Blu-ray",
-        evidence: [{ source: "bluray", observedAt: NOW, confidence: "source_claim" }],
-      }],
-      fetchedAt: NOW,
-      warnings: [],
-    };
-    const uiModel = model({
-      aggregation: aggregateDiscoverySnapshots([streaming, regional, bluray]),
-      sourceStates: [],
-    });
-    const initial: DiscoveryScreenState = {
-      ...INITIAL_DISCOVERY_SCREEN_STATE,
-      feed: "india",
-      dateWindow: "all",
-    };
-    const view = render(createElement(Harness, { uiModel, initial }));
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    const availableFrame = view.lastFrame() ?? "";
-
-    expect(availableFrame).toContain("Available in India");
-    expect(availableFrame).toContain("Global Title in India");
-    expect(availableFrame).toContain("Digital");
-    expect(availableFrame).toContain("Physical");
-    expect(availableFrame).not.toContain("Unknown Region Indian Disc");
-
-    view.stdin.write("i");
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(view.lastFrame()).toContain("Indian titles only");
-    expect(view.lastFrame()).not.toContain("Global Title in India");
-    expect(view.lastFrame()).toContain("Example Film");
-    view.unmount();
-  });
-
   it("opens and closes details from the selected row", async () => {
     const initial: DiscoveryScreenState = {
       ...INITIAL_DISCOVERY_SCREEN_STATE,
@@ -909,7 +1045,7 @@ describe("Discover interactions", () => {
     view.unmount();
   });
 
-  it("drops optional language/source columns on narrow terminals", () => {
+  it("drops provider, language, and source columns before rating data on narrow terminals", () => {
     const screen: DiscoveryScreenState = {
       ...INITIAL_DISCOVERY_SCREEN_STATE,
       feed: "ott",
@@ -926,7 +1062,7 @@ describe("Discover interactions", () => {
     const frame = view.lastFrame() ?? "";
 
     expect(frame).toContain("Example Film");
-    expect(frame).toContain("Netflix");
+    expect(frame).not.toContain("Netflix");
     expect(frame).not.toContain("Hindi");
     expect(frame).not.toContain("Streaming Avai");
     view.unmount();

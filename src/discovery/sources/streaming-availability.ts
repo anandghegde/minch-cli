@@ -85,6 +85,7 @@ export interface StreamingShow {
   genreIds: number[];
   genreLabels: string[];
   images?: NonNullable<CatalogTitle["images"]>;
+  rating?: number;
 }
 
 export interface StreamingChangesPage {
@@ -251,6 +252,8 @@ export function parseStreamingChangesPage(value: unknown): StreamingChangesPage 
     const originCountries = countryCodes(raw.countries ?? raw.originCountries);
     const parsedGenres = genres(raw.genres);
     const images = showImages(raw.imageSet);
+    const rating = typeof raw.rating === "number" && Number.isFinite(raw.rating) &&
+      raw.rating >= 0 && raw.rating <= 100 ? raw.rating : undefined;
     shows[dictionaryKey] = {
       id,
       title,
@@ -265,6 +268,7 @@ export function parseStreamingChangesPage(value: unknown): StreamingChangesPage 
       genreIds: parsedGenres.ids,
       genreLabels: parsedGenres.labels,
       ...(images ? { images } : {}),
+      ...(rating !== undefined ? { rating } : {}),
     };
   }
 
@@ -638,6 +642,15 @@ export function createStreamingAvailabilityAdapter(
             ...(show.genreLabels.length > 0 ? { genreLabels: show.genreLabels } : {}),
             ...(show.images?.verticalPoster ? { posterUrl: show.images.verticalPoster } : {}),
             ...(show.images ? { images: show.images } : {}),
+            ...(show.rating !== undefined
+              ? { ratings: [{
+                  system: "aggregate",
+                  provider: "streaming-availability",
+                  value: show.rating,
+                  scale: 100,
+                  observedAt,
+                }] }
+              : {}),
           });
           const provider = normalizeProvider(change.serviceId, change.serviceName)!;
           const date = change.timestamp === undefined

@@ -106,4 +106,22 @@ describe("canonical discovery title identity", () => {
     expect(result.canonicalIdBySourceTitleId.get("bluray:unknown"))
       .not.toBe(result.canonicalIdBySourceTitleId.get("tmdb:two"));
   });
+
+  it("merges ratings by provider and keeps the newest observation, not the maximum", () => {
+    const older = title("tmdb:movie:4", "Rated", 2026, "movie", { tmdbId: 4 });
+    older.ratings = [{ system: "tmdb", provider: "tmdb", value: 9.9, scale: 10, observedAt: 1 }];
+    const newer = title("streaming:4", "Rated", 2026, "movie", { tmdbId: 4 });
+    newer.ratings = [
+      { system: "tmdb", provider: "tmdb", value: 7.2, scale: 10, observedAt: 2 },
+      { system: "aggregate", provider: "streaming-availability", value: 80, scale: 100, observedAt: 2 },
+    ];
+    const [merged] = canonicalizeSnapshotTitles([
+      snapshot("tmdb", [older]),
+      snapshot("streaming-availability", [newer]),
+    ]).titles;
+    expect(merged?.ratings).toEqual([
+      { system: "tmdb", provider: "tmdb", value: 7.2, scale: 10, observedAt: 2 },
+      { system: "aggregate", provider: "streaming-availability", value: 80, scale: 100, observedAt: 2 },
+    ]);
+  });
 });

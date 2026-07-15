@@ -1,6 +1,14 @@
 import { useReducer } from "react";
 
-export const DISCOVERY_FEEDS = ["trending", "ott", "bluray", "india"] as const;
+export const DISCOVERY_FEEDS = [
+  "trending",
+  "ott",
+  "bluray",
+  "popular",
+  "charts",
+  "community",
+  "tamilmv",
+] as const;
 export type DiscoveryFeed = typeof DISCOVERY_FEEDS[number];
 
 export const DISCOVERY_MEDIA_FILTERS = ["all", "movie", "series"] as const;
@@ -50,7 +58,6 @@ export interface DiscoveryScreenState {
   providerId?: string;
   languageCode?: string;
   formatLabel?: string;
-  indianTitlesOnly: boolean;
   cursor: number;
   detailsOpen: boolean;
 }
@@ -62,7 +69,6 @@ export type DiscoveryScreenAction =
   | { type: "set-provider"; providerId?: string }
   | { type: "set-language"; languageCode?: string }
   | { type: "set-format"; formatLabel?: string }
-  | { type: "toggle-indian-titles" }
   | { type: "move-cursor"; delta: number; rowCount: number }
   | { type: "set-cursor"; cursor: number; rowCount: number }
   | { type: "clamp-cursor"; rowCount: number }
@@ -74,7 +80,6 @@ export const INITIAL_DISCOVERY_SCREEN_STATE: DiscoveryScreenState = {
   feed: "trending",
   media: "all",
   dateWindow: "30d",
-  indianTitlesOnly: false,
   cursor: 0,
   detailsOpen: false,
 };
@@ -97,7 +102,11 @@ export function discoveryScreenReducer(
 ): DiscoveryScreenState {
   switch (action.type) {
     case "set-feed":
-      return resetSelection(state, { feed: action.feed });
+      // TamilMV listings often lack calendar dates; default to all cached rows.
+      return resetSelection(state, {
+        feed: action.feed,
+        ...(action.feed === "tamilmv" ? { dateWindow: "all" as const } : {}),
+      });
     case "set-media":
       return resetSelection(state, { media: action.media });
     case "set-date-window":
@@ -118,8 +127,6 @@ export function discoveryScreenReducer(
           ? { formatLabel: action.formatLabel }
           : { formatLabel: undefined }),
       });
-    case "toggle-indian-titles":
-      return resetSelection(state, { indianTitlesOnly: !state.indianTitlesOnly });
     case "move-cursor":
       return {
         ...state,

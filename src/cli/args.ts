@@ -1,6 +1,7 @@
 export type CliCommand =
   | { kind: "version" }
   | { kind: "help" }
+  | { kind: "log-file" }
   | { kind: "discovery-status" }
   | { kind: "run"; initialQuery?: string }
   | { kind: "invalid"; arg: string };
@@ -11,6 +12,7 @@ export function parseCliArgs(argv: string[]): CliCommand {
   const a = args[0]!;
   if (a === "--version" || a === "-v") return { kind: "version" };
   if (a === "--help" || a === "-h") return { kind: "help" };
+  if (a === "--log-file" && args.length === 1) return { kind: "log-file" };
   if (a === "--discovery-status" && args.length === 1) {
     return { kind: "discovery-status" };
   }
@@ -24,7 +26,8 @@ export const HELP_TEXT = `minch \u2014 a terminal torrent finder for public sour
 usage
   minch                  open the search TUI
   minch "ubuntu 24.04"   open and run an initial search
-  minch --discovery-status  show local discovery request usage
+  minch --discovery-status  show local discovery and rating status
+  minch --log-file       print the diagnostic log path
   minch --version        print the version
   minch --help           show this help
 
@@ -46,10 +49,12 @@ ${DISCOVERY_CREDITS_NOTICE}
 ${TMDB_REQUIRED_NOTICE}
 ${JUSTWATCH_ATTRIBUTION_NOTICE}
 Source links: https://www.themoviedb.org · https://www.movieofthenight.com/about/api · https://www.blu-ray.com
+${IMDB_REQUIRED_NOTICE}
 `;
 import {
   DISCOVERY_CREDITS_NOTICE,
   DISCOVERY_SOURCE_CLAIM_NOTICE,
   JUSTWATCH_ATTRIBUTION_NOTICE,
+  IMDB_REQUIRED_NOTICE,
   TMDB_REQUIRED_NOTICE,
 } from "../discovery/attribution";
