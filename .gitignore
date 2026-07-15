@@ -12,6 +12,7 @@ dist
 .env.*
 !.env.example
 .minch-beta/
+.worktrees/
 
 # Discovery credential names (never put values in this file or the template):
 # TMDB_READ_TOKEN
