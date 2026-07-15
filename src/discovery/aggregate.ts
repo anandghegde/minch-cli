@@ -69,6 +69,9 @@ export interface DiscoveryFeedFilters {
   languageCodes?: readonly string[];
   genreIds?: readonly number[];
   indianTitlesOnly?: boolean;
+  yearFilter?: string;
+  minImdbRating?: number;
+  minImdbVotes?: number;
 }
 
 export interface DiscoveryRankingOptions {
@@ -525,6 +528,23 @@ function normalizedLanguages(entry: DiscoveryFeedEntry): Set<string> {
   }));
 }
 
+export function matchesYearFilter(
+  year: number | undefined,
+  yearFilter: string | undefined,
+): boolean {
+  if (!yearFilter || yearFilter === "all") return true;
+  if (year === undefined || !Number.isFinite(year)) return false;
+  if (yearFilter === "pre-1980") return year < 1980;
+  const decade = /^(\d{4})s$/.exec(yearFilter);
+  if (decade) {
+    const start = Number(decade[1]);
+    return year >= start && year <= start + 9;
+  }
+  const exact = Number(yearFilter);
+  if (Number.isInteger(exact)) return year === exact;
+  return true;
+}
+
 /** Apply hard feed filters only; ranking is a separate deterministic step. */
 export function filterDiscoveryEntries(
   entries: readonly DiscoveryFeedEntry[],
@@ -584,6 +604,7 @@ export function filterDiscoveryEntries(
       return false;
     }
     if (filters.indianTitlesOnly && !entry.title?.originCountries.includes("IN")) return false;
+    if (!matchesYearFilter(entry.title?.year, filters.yearFilter)) return false;
     return true;
   });
 }
