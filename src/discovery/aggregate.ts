@@ -6,6 +6,7 @@ import {
   normalizeLanguage,
 } from "./normalize";
 import type {
+  CatalogRating,
   CatalogTitle,
   DiscoverySource,
   EvidenceConfidence,
@@ -13,7 +14,11 @@ import type {
   ReleaseEvent,
   SourceEvidence,
 } from "./types";
-import { mergeRatings } from "./ratings/types";
+import {
+  formatRatingValue,
+  mergeRatings,
+  selectPreferredRating,
+} from "./ratings/types";
 
 export interface CanonicalIdentityDiagnostics {
   /** Ambiguous external-ID or title/year buckets deliberately left separate. */
@@ -69,6 +74,9 @@ export interface DiscoveryFeedFilters {
   languageCodes?: readonly string[];
   genreIds?: readonly number[];
   indianTitlesOnly?: boolean;
+  yearFilter?: string;
+  minImdbRating?: number;
+  minImdbVotes?: number;
 }
 
 export interface DiscoveryRankingOptions {
@@ -525,10 +533,44 @@ function normalizedLanguages(entry: DiscoveryFeedEntry): Set<string> {
   }));
 }
 
+export function matchesYearFilter(
+  year: number | undefined,
+  yearFilter: string | undefined,
+): boolean {
+  if (!yearFilter || yearFilter === "all") return true;
+  if (year === undefined || !Number.isFinite(year)) return false;
+  if (yearFilter === "pre-1980") return year < 1980;
+  const decade = /^(\d{4})s$/.exec(yearFilter);
+  if (decade) {
+    const start = Number(decade[1]);
+    return year >= start && year <= start + 9;
+  }
+  const exact = Number(yearFilter);
+  if (Number.isInteger(exact)) return year === exact;
+  return true;
+}
+
+export type DiscoveryRatingsMap = ReadonlyMap<string, readonly CatalogRating[]>;
+
+/** IMDb-only rating for filters/sorts; map wins over title.ratings. */
+export function entryImdbRating(
+  entry: DiscoveryFeedEntry,
+  ratingsByTitleId: DiscoveryRatingsMap = new Map(),
+): CatalogRating | undefined {
+  const titleId = entry.title?.id;
+  const fromMap = titleId ? ratingsByTitleId.get(titleId) : undefined;
+  const pool = [
+    ...(fromMap ?? []),
+    ...(entry.title?.ratings ?? []),
+  ].filter((rating) => rating.system === "imdb");
+  return selectPreferredRating(pool);
+}
+
 /** Apply hard feed filters only; ranking is a separate deterministic step. */
 export function filterDiscoveryEntries(
   entries: readonly DiscoveryFeedEntry[],
   filters: DiscoveryFeedFilters,
+  ratingsByTitleId: DiscoveryRatingsMap = new Map(),
 ): DiscoveryFeedEntry[] {
   const mediaTypes = new Set(filters.mediaTypes ?? []);
   const providerIds = new Set(filters.providerIds ?? []);
@@ -584,6 +626,23 @@ export function filterDiscoveryEntries(
       return false;
     }
     if (filters.indianTitlesOnly && !entry.title?.originCountries.includes("IN")) return false;
+    if (!matchesYearFilter(entry.title?.year, filters.yearFilter)) return false;
+    if (filters.minImdbRating !== undefined || filters.minImdbVotes !== undefined) {
+      const rating = entryImdbRating(entry, ratingsByTitleId);
+      if (!rating) return false;
+      const score = formatRatingValue(rating);
+      if (
+        filters.minImdbRating !== undefined &&
+        score < filters.minImdbRating
+      ) {
+        return false;
+      }
+      if (filters.minImdbVotes !== undefined) {
+        if (rating.voteCount === undefined || rating.voteCount < filters.minImdbVotes) {
+          return false;
+        }
+      }
+    }
     return true;
   });
 }
@@ -630,6 +689,92 @@ export function rankDiscoveryEntries(
     }
     const titleDifference = (left.title?.title ?? "").localeCompare(right.title?.title ?? "");
     if (titleDifference !== 0) return titleDifference;
+    return stableEntryId(left).localeCompare(stableEntryId(right));
+  });
+}
+
+export type DiscoverySortMode =
+  | "default"
+  | "date_added"
+  | "release_date"
+  | "imdb_rating"
+  | "imdb_votes"
+  | "title";
+
+function observedAt(entry: DiscoveryFeedEntry): number | undefined {
+  const event = entry.event;
+  if (!event) return undefined;
+  return Math.max(event.lastObservedAt ?? 0, event.firstObservedAt ?? 0) || undefined;
+}
+
+/** Compare values with missing/empty last. Always returns a number; 0 means equal. */
+function cmpMissingLast(
+  left: number | string | undefined,
+  right: number | string | undefined,
+  dir: "asc" | "desc",
+): number {
+  const leftMissing = left === undefined || left === "";
+  const rightMissing = right === undefined || right === "";
+  if (leftMissing && rightMissing) return 0;
+  if (leftMissing) return 1;
+  if (rightMissing) return -1;
+  if (left === right) return 0;
+  if (typeof left === "number" && typeof right === "number") {
+    return dir === "desc" ? right - left : left - right;
+  }
+  const text = String(left).localeCompare(String(right));
+  return dir === "desc" ? -text : text;
+}
+
+/** Manual sort modes; `default` keeps the existing ranking cascade. */
+export function sortDiscoveryEntries(
+  entries: readonly DiscoveryFeedEntry[],
+  mode: DiscoverySortMode,
+  ranking: DiscoveryRankingOptions,
+  ratingsByTitleId: DiscoveryRatingsMap = new Map(),
+): DiscoveryFeedEntry[] {
+  if (mode === "default") {
+    return rankDiscoveryEntries(entries, ranking);
+  }
+
+  return [...entries].sort((left, right) => {
+    if (mode === "date_added") {
+      const primary = cmpMissingLast(observedAt(left), observedAt(right), "desc");
+      if (primary !== 0) return primary;
+    } else if (mode === "release_date") {
+      const primary = cmpMissingLast(left.event?.date, right.event?.date, "desc");
+      if (primary !== 0) return primary;
+    } else if (mode === "imdb_rating") {
+      const leftR = entryImdbRating(left, ratingsByTitleId);
+      const rightR = entryImdbRating(right, ratingsByTitleId);
+      const primary = cmpMissingLast(
+        leftR ? formatRatingValue(leftR) : undefined,
+        rightR ? formatRatingValue(rightR) : undefined,
+        "desc",
+      );
+      if (primary !== 0) return primary;
+      const votes = cmpMissingLast(leftR?.voteCount, rightR?.voteCount, "desc");
+      if (votes !== 0) return votes;
+    } else if (mode === "imdb_votes") {
+      const leftR = entryImdbRating(left, ratingsByTitleId);
+      const rightR = entryImdbRating(right, ratingsByTitleId);
+      const primary = cmpMissingLast(leftR?.voteCount, rightR?.voteCount, "desc");
+      if (primary !== 0) return primary;
+      const rating = cmpMissingLast(
+        leftR ? formatRatingValue(leftR) : undefined,
+        rightR ? formatRatingValue(rightR) : undefined,
+        "desc",
+      );
+      if (rating !== 0) return rating;
+    } else if (mode === "title") {
+      const primary = cmpMissingLast(left.title?.title, right.title?.title, "asc");
+      if (primary !== 0) return primary;
+      const year = cmpMissingLast(left.title?.year, right.title?.year, "asc");
+      if (year !== 0) return year;
+    }
+
+    const titleCmp = (left.title?.title ?? "").localeCompare(right.title?.title ?? "");
+    if (titleCmp !== 0) return titleCmp;
     return stableEntryId(left).localeCompare(stableEntryId(right));
   });
 }

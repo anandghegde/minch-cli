@@ -1,7 +1,8 @@
 import { useEffect, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import {
-  selectDiscoveryEntries,
+  filterDiscoveryEntries,
+  sortDiscoveryEntries,
   type DiscoveryFeedEntry,
   type DiscoveryFeedFilters,
 } from "../../discovery/aggregate";
@@ -24,6 +25,12 @@ import {
   DISCOVERY_FEEDS,
   DISCOVERY_LANGUAGE_FILTERS,
   DISCOVERY_MEDIA_FILTERS,
+  DISCOVERY_MIN_IMDB_RATINGS,
+  DISCOVERY_MIN_IMDB_VOTES,
+  DISCOVERY_SORT_LABELS,
+  DISCOVERY_SORT_MODES,
+  DISCOVERY_YEAR_FILTER_LABELS,
+  DISCOVERY_YEAR_FILTERS,
   useDiscoveryScreenState,
   type DiscoveryScreenAction,
   type DiscoveryScreenState,
@@ -380,7 +387,7 @@ function DiscoveryEmpty({
   const failures = [...new Set(model.sourceStates.flatMap(({ label, state }) =>
     state.error?.message ? [`${label}: ${state.error.message}`] : []))];
   const message = reason === "filters"
-    ? "Filters removed all discovery rows; adjust type, window, provider, language, or format."
+    ? "Filters removed all discovery rows; adjust type, year, language, IMDb, or press x to reset."
     : reason === "offline-no-cache"
       ? "Sources are offline or unavailable and there is no cached discovery data."
       : reason === "quota-no-cache"
@@ -445,16 +452,25 @@ export function DiscoveryContent({
       : {}),
     ...(screen.languageCode ? { languageCodes: [screen.languageCode] } : {}),
     ...(screen.formatLabel ? { formatLabels: [screen.formatLabel] } : {}),
+    ...(screen.yearFilter !== "all" ? { yearFilter: screen.yearFilter } : {}),
+    ...(screen.minImdbRating !== undefined ? { minImdbRating: screen.minImdbRating } : {}),
+    ...(screen.minImdbVotes !== undefined ? { minImdbVotes: screen.minImdbVotes } : {}),
   };
   const entries = useMemo(() => {
-    const selected = selectDiscoveryEntries(
+    const filtered = filterDiscoveryEntries(
       model.aggregation.feeds[screen.feed],
       filters,
-      { direction: date.direction },
+      model.ratings,
     );
-    return screen.feed === "bluray" ? dedupeBlurayEntries(selected) : selected;
+    const ordered = sortDiscoveryEntries(
+      filtered,
+      screen.sort,
+      { direction: date.direction },
+      model.ratings,
+    );
+    return screen.feed === "bluray" ? dedupeBlurayEntries(ordered) : ordered;
   },
-    [date.direction, filters, model.aggregation.feeds, screen.feed],
+    [date.direction, filters, model.aggregation.feeds, model.ratings, screen.feed, screen.sort],
   );
   const baseEntries = model.aggregation.feeds[screen.feed];
   const providerChoices = [
@@ -512,6 +528,11 @@ export function DiscoveryContent({
       : input === "p" ? "provider.next"
       : input === "l" ? "language.next"
       : input === "t" ? "window.next"
+      : input === "o" ? "sort.next"
+      : input === "y" ? "year.next"
+      : input === "i" ? "imdb-rating.next"
+      : input === "v" ? "imdb-votes.next"
+      : input === "x" ? "filters.reset"
       : input === "r" ? "refresh"
       : /^[1-9]$/.test(input) ? "feed.select"
       : input === "g" || input === "G" ? "cursor.jump"
@@ -582,6 +603,43 @@ export function DiscoveryContent({
         type: "set-date-window",
         dateWindow: cycle(DISCOVERY_DATE_WINDOWS, screen.dateWindow, 1),
       });
+      return;
+    }
+    if (input === "o") {
+      dispatch({ type: "set-sort", sort: cycle(DISCOVERY_SORT_MODES, screen.sort, 1) });
+      return;
+    }
+    if (input === "y") {
+      dispatch({
+        type: "set-year-filter",
+        yearFilter: cycle(DISCOVERY_YEAR_FILTERS, screen.yearFilter, 1),
+      });
+      return;
+    }
+    if (input === "i") {
+      const current = Math.max(
+        0,
+        DISCOVERY_MIN_IMDB_RATINGS.findIndex((value) => value === screen.minImdbRating),
+      );
+      const next = DISCOVERY_MIN_IMDB_RATINGS[
+        (current + 1) % DISCOVERY_MIN_IMDB_RATINGS.length
+      ]!;
+      dispatch({ type: "set-min-imdb-rating", minImdbRating: next });
+      return;
+    }
+    if (input === "v") {
+      const current = Math.max(
+        0,
+        DISCOVERY_MIN_IMDB_VOTES.findIndex((value) => value === screen.minImdbVotes),
+      );
+      const next = DISCOVERY_MIN_IMDB_VOTES[
+        (current + 1) % DISCOVERY_MIN_IMDB_VOTES.length
+      ]!;
+      dispatch({ type: "set-min-imdb-votes", minImdbVotes: next });
+      return;
+    }
+    if (input === "x") {
+      dispatch({ type: "reset-filters" });
       return;
     }
     if (input === "r") {
@@ -659,7 +717,11 @@ export function DiscoveryContent({
               : ""}
           </Text>
         )}
-        <Text color={COLOR.dim}>←→ feed · m type · t window · r refresh</Text>
+        <Text color={COLOR.dim}>
+          {cols < 90
+            ? "←→ m t o y i v x r"
+            : "←→ feed · m type · t window · o/y/i/v · x reset · r"}
+        </Text>
       </Box>
 
       <Box marginTop={1} flexDirection="column">
@@ -677,9 +739,17 @@ export function DiscoveryContent({
         </Box>
         <Text color={COLOR.dim}>
           {MEDIA_LABELS[screen.media]}
-           {screen.feed === "trending" || screen.feed === "popular" || screen.feed === "charts" || screen.feed === "community" || screen.feed === "tamilmv" ? "" : ` · ${DISCOVERY_DATE_WINDOW_LABELS[screen.dateWindow]}`}
-           {screen.feed === "ott" || screen.feed === "popular" || screen.feed === "charts" ? ` · ${providerLabel}` : ""}
+          {screen.feed === "trending" || screen.feed === "popular" || screen.feed === "charts" || screen.feed === "community" || screen.feed === "tamilmv" ? "" : ` · ${DISCOVERY_DATE_WINDOW_LABELS[screen.dateWindow]}`}
+          {screen.feed === "ott" || screen.feed === "popular" || screen.feed === "charts" ? ` · ${providerLabel}` : ""}
           {screen.languageCode ? ` · ${languageChoice.label}` : ""}
+          {screen.yearFilter !== "all" ? ` · ${DISCOVERY_YEAR_FILTER_LABELS[screen.yearFilter]}` : ""}
+          {screen.minImdbRating !== undefined
+            ? ` · IMDb ${Number.isInteger(screen.minImdbRating) ? screen.minImdbRating.toFixed(1) : String(screen.minImdbRating)}+`
+            : ""}
+          {screen.minImdbVotes !== undefined
+            ? ` · ${formatVoteCount(screen.minImdbVotes)}+ votes`
+            : ""}
+          {screen.sort !== "default" ? ` · sort: ${DISCOVERY_SORT_LABELS[screen.sort]}` : ""}
         </Text>
       </Box>
 
