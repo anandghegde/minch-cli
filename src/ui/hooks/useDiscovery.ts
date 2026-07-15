@@ -277,9 +277,10 @@ export function buildDiscoveryLoadTargets(
   if (feed === "tamilmv") {
     return [{
       key: "tamilmv:latest",
-      label: "1TamilMV Latest",
+      label: "1TamilMV Latest + Recent",
       adapter: tamilmv,
-      request: request("tamilmv_latest", "IN", dateWindow, today),
+      // Homepage + forums + activity stream (capped by TAMILMV_LISTING_PATHS).
+      request: request("tamilmv_latest", "IN", dateWindow, today, { pageLimit: 3 }),
     }];
   }
   const upcoming = dateWindow.startsWith("upcoming-");

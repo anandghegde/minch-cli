@@ -14,7 +14,8 @@ export interface SourceBudget {
 export const SOURCE_BUDGETS: Readonly<Partial<Record<DiscoverySource, SourceBudget>>> = {
   "streaming-availability": { softWarning: 350, hardCap: 450 },
   apify: { softWarning: 80, hardCap: 100 },
-  tamilmv: { softWarning: 40, hardCap: 60 },
+  // Multi-page listing scrapes (homepage + forums + activity).
+  tamilmv: { softWarning: 80, hardCap: 120 },
   trakt: { softWarning: 0, hardCap: 0 },
 };
 

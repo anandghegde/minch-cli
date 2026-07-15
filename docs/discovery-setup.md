@@ -104,7 +104,7 @@ evade the fixed safety policy.
 | Streaming Availability changes | 12 hours | 45 days | up to four pages for additions; one for upcoming |
 | India provider dictionary | 30 days | 90 days | one page |
 | Blu-ray.com RSS | 24 hours | 30 days | one RSS request |
-| 1TamilMV (Firecrawl) | 6 hours | 14 days | one homepage scrape |
+| 1TamilMV (Firecrawl) | 6 hours | 14 days | up to three listing pages (home + forums + activity) |
 | TMDB title enrichment | 7 days | in-memory session cache | only missing fields |
 | Exact rating | 24 hours | 30 days | cache-aware enrichment |
 | IMDb dataset | checked daily | last good file | one coalesced download |
@@ -131,8 +131,8 @@ Every attempted Streaming Availability request, including retries, is recorded
 before the network call. minch warns at 350 attempts in a UTC month and stops
 before attempt 451 (450 hard cap). At or above the cap, it shows cached/partial
 results and `quota-paused`; it never switches to billable usage. Upstream 429
-responses preserve `Retry-After` timing. TamilMV/Firecrawl scrapes warn at 40
-attempts per UTC month and hard-cap at 60.
+responses preserve `Retry-After` timing. TamilMV/Firecrawl scrapes warn at 80
+attempts per UTC month and hard-cap at 120 (homepage + forums + activity).
 
 Run this read-only command without starting the TUI or contacting a network:
 
