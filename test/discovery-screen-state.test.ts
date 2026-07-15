@@ -19,9 +19,39 @@ describe("screen-local discovery state", () => {
       feed: "trending",
       media: "all",
       dateWindow: "30d",
+      sort: "default",
+      yearFilter: "all",
       cursor: 0,
       detailsOpen: false,
     });
+  });
+
+  it("cycles sort, year, min IMDb rating/votes and resets them with filters", () => {
+    const withFilters = reduce([
+      { type: "set-feed", feed: "tamilmv" },
+      { type: "set-sort", sort: "imdb_rating" },
+      { type: "set-year-filter", yearFilter: "2020s" },
+      { type: "set-min-imdb-rating", minImdbRating: 7 },
+      { type: "set-min-imdb-votes", minImdbVotes: 1000 },
+      { type: "set-language", languageCode: "ta" },
+    ]);
+    expect(withFilters).toMatchObject({
+      feed: "tamilmv",
+      sort: "imdb_rating",
+      yearFilter: "2020s",
+      minImdbRating: 7,
+      minImdbVotes: 1000,
+      languageCode: "ta",
+      dateWindow: "all", // tamilmv feed still forces all
+    });
+
+    const reset = discoveryScreenReducer(withFilters, { type: "reset-filters" });
+    expect(reset).toEqual({
+      ...INITIAL_DISCOVERY_SCREEN_STATE,
+      feed: "tamilmv",
+    });
+    expect(reset.minImdbRating).toBeUndefined();
+    expect(reset.minImdbVotes).toBeUndefined();
   });
 
   it("stores feed, media, window, provider, language, and format filters", () => {
