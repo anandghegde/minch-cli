@@ -693,6 +693,92 @@ export function rankDiscoveryEntries(
   });
 }
 
+export type DiscoverySortMode =
+  | "default"
+  | "date_added"
+  | "release_date"
+  | "imdb_rating"
+  | "imdb_votes"
+  | "title";
+
+function observedAt(entry: DiscoveryFeedEntry): number | undefined {
+  const event = entry.event;
+  if (!event) return undefined;
+  return Math.max(event.lastObservedAt ?? 0, event.firstObservedAt ?? 0) || undefined;
+}
+
+/** Compare values with missing/empty last. Always returns a number; 0 means equal. */
+function cmpMissingLast(
+  left: number | string | undefined,
+  right: number | string | undefined,
+  dir: "asc" | "desc",
+): number {
+  const leftMissing = left === undefined || left === "";
+  const rightMissing = right === undefined || right === "";
+  if (leftMissing && rightMissing) return 0;
+  if (leftMissing) return 1;
+  if (rightMissing) return -1;
+  if (left === right) return 0;
+  if (typeof left === "number" && typeof right === "number") {
+    return dir === "desc" ? right - left : left - right;
+  }
+  const text = String(left).localeCompare(String(right));
+  return dir === "desc" ? -text : text;
+}
+
+/** Manual sort modes; `default` keeps the existing ranking cascade. */
+export function sortDiscoveryEntries(
+  entries: readonly DiscoveryFeedEntry[],
+  mode: DiscoverySortMode,
+  ranking: DiscoveryRankingOptions,
+  ratingsByTitleId: DiscoveryRatingsMap = new Map(),
+): DiscoveryFeedEntry[] {
+  if (mode === "default") {
+    return rankDiscoveryEntries(entries, ranking);
+  }
+
+  return [...entries].sort((left, right) => {
+    if (mode === "date_added") {
+      const primary = cmpMissingLast(observedAt(left), observedAt(right), "desc");
+      if (primary !== 0) return primary;
+    } else if (mode === "release_date") {
+      const primary = cmpMissingLast(left.event?.date, right.event?.date, "desc");
+      if (primary !== 0) return primary;
+    } else if (mode === "imdb_rating") {
+      const leftR = entryImdbRating(left, ratingsByTitleId);
+      const rightR = entryImdbRating(right, ratingsByTitleId);
+      const primary = cmpMissingLast(
+        leftR ? formatRatingValue(leftR) : undefined,
+        rightR ? formatRatingValue(rightR) : undefined,
+        "desc",
+      );
+      if (primary !== 0) return primary;
+      const votes = cmpMissingLast(leftR?.voteCount, rightR?.voteCount, "desc");
+      if (votes !== 0) return votes;
+    } else if (mode === "imdb_votes") {
+      const leftR = entryImdbRating(left, ratingsByTitleId);
+      const rightR = entryImdbRating(right, ratingsByTitleId);
+      const primary = cmpMissingLast(leftR?.voteCount, rightR?.voteCount, "desc");
+      if (primary !== 0) return primary;
+      const rating = cmpMissingLast(
+        leftR ? formatRatingValue(leftR) : undefined,
+        rightR ? formatRatingValue(rightR) : undefined,
+        "desc",
+      );
+      if (rating !== 0) return rating;
+    } else if (mode === "title") {
+      const primary = cmpMissingLast(left.title?.title, right.title?.title, "asc");
+      if (primary !== 0) return primary;
+      const year = cmpMissingLast(left.title?.year, right.title?.year, "asc");
+      if (year !== 0) return year;
+    }
+
+    const titleCmp = (left.title?.title ?? "").localeCompare(right.title?.title ?? "");
+    if (titleCmp !== 0) return titleCmp;
+    return stableEntryId(left).localeCompare(stableEntryId(right));
+  });
+}
+
 /** Public composition boundary: hard filters always run before ranking. */
 export function selectDiscoveryEntries(
   entries: readonly DiscoveryFeedEntry[],
