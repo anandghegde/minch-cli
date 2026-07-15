@@ -171,29 +171,56 @@ export function Trending({ active }: { active: boolean }) {
             const idx = start + i;
             const sel = idx === cursor;
             return (
-              <Box key={`${r.source}-${r.infoHash}-${idx}`}>
-                <Text color={sel ? COLOR.accent : COLOR.dim}>
+              <Box
+                key={`${r.source}-${r.infoHash}-${idx}`}
+                width={cols}
+              >
+                <Text
+                  color={sel ? COLOR.accent : COLOR.dim}
+                  backgroundColor={sel ? COLOR.selected : undefined}
+                >
                   {sel ? ICON.pointer : " "}{" "}
                 </Text>
                 <Box width={nameW}>
-                  <Text color={sel ? COLOR.text : COLOR.alt} wrap="truncate-end">
-                    {truncate(cleanText(r.name), nameW)}
+                  <Text
+                    color={sel ? COLOR.text : COLOR.alt}
+                    backgroundColor={sel ? COLOR.selected : undefined}
+                    wrap="truncate-end"
+                  >
+                    {truncate(cleanText(r.name), nameW).padEnd(nameW)}
                   </Text>
                 </Box>
                 <Box width={6} justifyContent="flex-end">
-                  <Text color={r.seeders > 0 ? COLOR.good : COLOR.dim}>
-                    {ICON.up}
-                    {r.seeders}
+                  <Text
+                    color={sel ? COLOR.text : r.seeders > 0 ? COLOR.good : COLOR.dim}
+                    backgroundColor={sel ? COLOR.selected : undefined}
+                  >
+                    {`${ICON.up}${r.seeders}`.padStart(6)}
                   </Text>
                 </Box>
                 <Box width={11} justifyContent="flex-end">
-                  <Text color={COLOR.alt}> {formatBytes(r.sizeBytes)}</Text>
+                  <Text
+                    color={sel ? COLOR.text : COLOR.alt}
+                    backgroundColor={sel ? COLOR.selected : undefined}
+                  >
+                    {formatBytes(r.sizeBytes).padStart(11)}
+                  </Text>
                 </Box>
                 <Box width={9} justifyContent="flex-end">
-                  <Text color={COLOR.dim}> {formatRelative(r.added)}</Text>
+                  <Text
+                    color={sel ? COLOR.text : COLOR.dim}
+                    backgroundColor={sel ? COLOR.selected : undefined}
+                  >
+                    {formatRelative(r.added).padStart(9)}
+                  </Text>
                 </Box>
                 <Box width={10} justifyContent="flex-end">
-                  <Text color={COLOR.dim}> {truncate(r.sourceLabel ?? r.source, 9)}</Text>
+                  <Text
+                    color={sel ? COLOR.text : COLOR.dim}
+                    backgroundColor={sel ? COLOR.selected : undefined}
+                  >
+                    {truncate(r.sourceLabel ?? r.source, 9).padStart(10)}
+                  </Text>
                 </Box>
               </Box>
             );

@@ -6,6 +6,7 @@ import { useDownloads } from "./hooks/useDownloads";
 interface DownloadStore {
   downloads: DownloadEntry[];
   downloadLocally: (transfer: Transfer, file?: TransferFile) => void;
+  copyDownloadLink: (transfer: Transfer, file: TransferFile) => void;
   cancelDownload: (id: string) => void;
   openDownload: (entry: DownloadEntry) => void;
   dismissDownload: (id: string) => void;
@@ -16,6 +17,7 @@ const DownloadContext = createContext<DownloadStore | null>(null);
 export function DownloadProvider({
   manager,
   downloadLocally,
+  copyDownloadLink,
   cancelDownload,
   openDownload,
   dismissDownload,
@@ -23,8 +25,8 @@ export function DownloadProvider({
 }: Omit<DownloadStore, "downloads"> & { manager: DownloadManager; children: ReactNode }) {
   const downloads = useDownloads(manager);
   const value = useMemo(
-    () => ({ downloads, downloadLocally, cancelDownload, openDownload, dismissDownload }),
-    [downloads, downloadLocally, cancelDownload, openDownload, dismissDownload],
+    () => ({ downloads, downloadLocally, copyDownloadLink, cancelDownload, openDownload, dismissDownload }),
+    [downloads, downloadLocally, copyDownloadLink, cancelDownload, openDownload, dismissDownload],
   );
   return <DownloadContext.Provider value={value}>{children}</DownloadContext.Provider>;
 }

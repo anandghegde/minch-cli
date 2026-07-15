@@ -41,6 +41,7 @@ function ledger() {
 describe("TMDB response guards", () => {
   it("keeps valid list rows and turns malformed rows into warnings", () => {
     const raw = fixture<{ results: unknown[] }>("tmdb-discover-movie.json");
+    Object.assign(raw.results[0] as object, { vote_average: 8.4, vote_count: 146_281 });
     raw.results.push({ id: "bad", title: "Malformed" }, null);
     const parsed = parseTmdbListPage(raw);
 
@@ -50,6 +51,8 @@ describe("TMDB response guards", () => {
       title: "Sample Indian Film",
       originalLanguage: "hi",
       genreIds: [18],
+      voteAverage: 8.4,
+      voteCount: 146_281,
     });
     expect(parsed.warnings).toHaveLength(2);
     expect(() => parseTmdbListPage({ page: 1 })).toThrow(TmdbContractError);

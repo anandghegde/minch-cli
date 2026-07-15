@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useStdin } from "ink";
 import { COLOR, ICON } from "../theme";
 import { editText } from "../text-input";
 
@@ -20,6 +20,23 @@ export function SearchBar({
 }) {
   const [cursor, setCursor] = useState(value.length);
   const cursorRef = useRef(value.length);
+  const latestRawInputRef = useRef("");
+  const { internal_eventEmitter: inputEmitter } = useStdin();
+
+  // Ink 5 classifies the DEL byte sent by most Backspace keys as `key.delete`.
+  // Capture the raw sequence before useInput handles it so a physical Backspace
+  // remains distinct from the forward-delete escape sequence (ESC [ 3 ~).
+  useEffect(() => {
+    if (!active) return;
+
+    const captureRawInput = (data: Buffer | string) => {
+      latestRawInputRef.current = data.toString();
+    };
+    inputEmitter.on("input", captureRawInput);
+    return () => {
+      inputEmitter.off("input", captureRawInput);
+    };
+  }, [active, inputEmitter]);
 
   // Keep the caret inside the string if the parent shortens `value`.
   useEffect(() => {
@@ -48,7 +65,11 @@ export function SearchBar({
         return;
       }
 
-      const edit = editText(value, cursorRef.current, input, key);
+      const editKey =
+        key.delete && latestRawInputRef.current === "\x7f"
+          ? { ...key, backspace: true, delete: false }
+          : key;
+      const edit = editText(value, cursorRef.current, input, editKey);
       if (!edit.handled) return;
       if (edit.value !== value) onChange(edit.value);
       cursorRef.current = edit.cursor;

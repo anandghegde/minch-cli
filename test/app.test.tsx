@@ -52,4 +52,27 @@ describe("App (render smoke)", () => {
     unmount();
   });
 
+  it("keeps Discover subtabs visible when switching to OTT", async () => {
+    const { lastFrame, stdin, unmount } = render(createElement(App, { onQuit: () => {} }));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    stdin.write("\t");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    stdin.write("\u001b[C");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("[OTT]");
+    expect(frame).toContain("Trending");
+    expect(frame).toContain("Blu-ray");
+    expect(frame).toContain("Popular");
+    expect(frame).toContain("India Charts");
+    expect(frame).toContain("Community");
+
+    stdin.write("\t");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(lastFrame()).toContain("[ Real-Debrid ]");
+    unmount();
+  });
+
 });

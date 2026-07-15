@@ -5,8 +5,8 @@ and discovery as separate domains.
 
 ## Highlights
 
-- Discover feeds for TMDB Trending, India OTT changes, Blu-ray/4K claims, and a
-  combined India view.
+- Discover feeds for TMDB Trending, India OTT changes, Blu-ray/4K claims, India
+  OTT charts, and weekly Letterboxd community popularity.
 - Date, provider, language, media, format, and Indian-origin filters.
 - Clean title/year handoff from a discovery row to torrent search.
 - Persistent stale-while-revalidate cache, per-source status, offline fallback,

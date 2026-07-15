@@ -11,6 +11,7 @@ describe("parseCliArgs", () => {
     expect(parseCliArgs(["--help"]).kind).toBe("help");
     expect(parseCliArgs(["-h"]).kind).toBe("help");
     expect(parseCliArgs(["--discovery-status"])).toEqual({ kind: "discovery-status" });
+    expect(parseCliArgs(["--log-file"])).toEqual({ kind: "log-file" });
   });
   it("treats plain args as an initial query", () => {
     expect(parseCliArgs(["ubuntu", "24.04"])).toEqual({

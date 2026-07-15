@@ -65,6 +65,8 @@ describe("TMDB discovery adapter feeds", () => {
             release_date: "2026-07-01",
             genre_ids: [18],
             popularity: 10,
+            vote_average: 8.4,
+            vote_count: 146281,
           },
           {
             id: 2,
@@ -98,6 +100,14 @@ describe("TMDB discovery adapter feeds", () => {
       ["Series", "series"],
     ]);
     expect(snapshot.titles[1]).toMatchObject({ year: 2025, originCountries: ["IN"] });
+    expect(snapshot.titles[0]?.ratings).toEqual([{
+      system: "tmdb",
+      provider: "tmdb",
+      value: 8.4,
+      scale: 10,
+      voteCount: 146281,
+      observedAt: NOW,
+    }]);
     expect(snapshot.events).toEqual([]);
     expect(snapshot.attribution).toEqual(TMDB_ATTRIBUTION);
     expect(attempts.recordAttempt).toHaveBeenCalledWith("tmdb", "trending-week");

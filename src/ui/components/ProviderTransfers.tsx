@@ -120,6 +120,7 @@ function DownloadRow({ d, width }: { d: DownloadEntry; width: number }) {
 interface FilePicker {
   transfer: Transfer;
   cursor: number;
+  action: "download" | "copy";
 }
 
 /**
@@ -152,11 +153,21 @@ export function ProviderTransfers({
 
   const [cursor, setCursor] = useState(0);
   const [picker, setPicker] = useState<FilePicker | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [fileCursor, setFileCursor] = useState(0);
   useEffect(() => {
     if (cursor >= transfers.length) setCursor(Math.max(0, transfers.length - 1));
   }, [transfers.length, cursor]);
 
   const current: Transfer | undefined = transfers[cursor];
+  const expanded = current?.id === expandedId ? current : undefined;
+  const expandedFile = expanded?.files[fileCursor];
+
+  useEffect(() => {
+    if (expanded && fileCursor >= expanded.files.length) {
+      setFileCursor(Math.max(0, expanded.files.length - 1));
+    }
+  }, [expanded, fileCursor]);
 
   // Pick the file(s) for a download: auto for single-file, picker for multi.
   const startDownload = (t: Transfer): void => {
@@ -165,7 +176,7 @@ export function ProviderTransfers({
       return;
     }
     if (t.files.length > 1) {
-      setPicker({ transfer: t, cursor: 0 });
+      setPicker({ transfer: t, cursor: 0, action: "download" });
       return;
     }
     downloadStore.downloadLocally(t, t.files[0]);
@@ -175,7 +186,8 @@ export function ProviderTransfers({
     (input, key) => {
       // The multi-file picker captures keys while open. Entry 0 = "download all".
       if (picker) {
-        const options = picker.transfer.files.length + 1;
+        const hasAll = picker.action === "download";
+        const options = picker.transfer.files.length + (hasAll ? 1 : 0);
         if (key.escape || input === "l") {
           setPicker(null);
         } else if (key.downArrow || input === "j") {
@@ -183,11 +195,14 @@ export function ProviderTransfers({
         } else if (key.upArrow || input === "k") {
           setPicker((p) => (p ? { ...p, cursor: Math.max(0, p.cursor - 1) } : p));
         } else if (key.return) {
-          if (picker.cursor === 0) {
+          if (hasAll && picker.cursor === 0) {
             for (const f of picker.transfer.files) downloadStore.downloadLocally(picker.transfer, f);
           } else {
-            const f = picker.transfer.files[picker.cursor - 1];
-            if (f) downloadStore.downloadLocally(picker.transfer, f);
+            const f = picker.transfer.files[picker.cursor - (hasAll ? 1 : 0)];
+            if (f) {
+              if (picker.action === "copy") downloadStore.copyDownloadLink(picker.transfer, f);
+              else downloadStore.downloadLocally(picker.transfer, f);
+            }
           }
           setPicker(null);
         }
@@ -221,13 +236,56 @@ export function ProviderTransfers({
         return;
       }
 
+      if (expanded) {
+        if (key.escape || input === "h" || key.leftArrow || input === "e" || key.rightArrow) {
+          setExpandedId(null);
+          return;
+        }
+        if (key.downArrow || input === "j") {
+          setFileCursor((c) => Math.min(expanded.files.length - 1, c + 1));
+          return;
+        }
+        if (key.upArrow || input === "k") {
+          setFileCursor((c) => Math.max(0, c - 1));
+          return;
+        }
+        if (input === "l" || key.return) {
+          if (expandedFile) downloadStore.downloadLocally(expanded, expandedFile);
+          else store.setNotice("No file is available for this transfer.");
+          return;
+        }
+        if (input === "y") {
+          if (expandedFile) downloadStore.copyDownloadLink(expanded, expandedFile);
+          else store.setNotice("No file is available for this transfer.");
+          return;
+        }
+      }
+
       if (transfers.length === 0) return;
       if (key.downArrow || input === "j") setCursor((c) => Math.min(transfers.length - 1, c + 1));
       else if (key.upArrow || input === "k") setCursor((c) => Math.max(0, c - 1));
       else if (input === "g") setCursor(0);
       else if (input === "G") setCursor(transfers.length - 1);
+      else if (input === "e" || key.rightArrow) {
+        if (current?.files.length) {
+          setExpandedId(current.id);
+          setFileCursor(0);
+        } else {
+          store.setNotice("No files are available for this transfer.");
+        }
+      }
       else if (input === "l" || key.return) {
         if (current) startDownload(current);
+      } else if (input === "y") {
+        if (!current || !isFinished(current)) {
+          store.setNotice("Transfer isn't finished yet.");
+        } else if (current.files.length > 1) {
+          setPicker({ transfer: current, cursor: 0, action: "copy" });
+        } else if (current.files[0]) {
+          downloadStore.copyDownloadLink(current, current.files[0]);
+        } else {
+          store.setNotice("No file is available for this transfer.");
+        }
       } else if (input === "x") {
         if (current) store.removeTransfer(current);
       }
@@ -239,7 +297,8 @@ export function ProviderTransfers({
   const shownDownloads = useMemo(() => providerDownloads.slice(0, 5), [providerDownloads]);
   const dlRows = shownDownloads.length ? shownDownloads.length + 1 : 0;
   const pickerRows = picker ? Math.min(picker.transfer.files.length + 1, 8) + 2 : 0;
-  const effRows = Math.max(3, listRows - dlRows - pickerRows);
+  const expandedRows = expanded ? expanded.files.length + 1 : 0;
+  const effRows = Math.max(3, listRows - dlRows - pickerRows - expandedRows);
 
   const start = Math.max(
     0,
@@ -266,7 +325,7 @@ export function ProviderTransfers({
             </Text>
           )}
         </Box>
-        <Text color={COLOR.dim}>l download · c cancel · o open · x remove</Text>
+      <Text color={COLOR.dim}>e expand · l download · y copy link · c cancel · o open · x remove</Text>
       </Box>
 
       <Box flexDirection="column" flexGrow={1} marginTop={1}>
@@ -288,38 +347,75 @@ export function ProviderTransfers({
             const busy = providerDownloads.some(
               (d) => d.transferId === t.id && (d.status === "active" || d.status === "queued"),
             );
-            return (
-              <Box key={`${t.provider}-${t.id}`}>
-                <Text color={sel ? COLOR.accent : COLOR.dim}>{sel ? ICON.pointer : " "} </Text>
-                <Text color={g.color}>{g.icon} </Text>
-                <Box width={nameW}>
-                  <Text color={sel ? COLOR.text : COLOR.alt} wrap="truncate-end">
-                    {busy ? `${ICON.down} ` : ""}
-                    {truncate(cleanText(t.name), nameW)}
-                  </Text>
-                </Box>
-                <Box width={13}>
-                  {t.status === "done" ? (
-                    <Text color={COLOR.good}>{g.label}</Text>
-                  ) : t.status === "error" ? (
-                    <Text color={COLOR.bad}>{g.label}</Text>
-                  ) : (
-                    <Text color={g.color}>
-                      {progressBar(t.progress, 7)} {Math.round(t.progress * 100)}%
+             return (
+               <Box key={`${t.provider}-${t.id}`} flexDirection="column">
+                  <Box width={cols}>
+                    <Text color={sel ? COLOR.accent : COLOR.dim} backgroundColor={sel ? COLOR.selected : undefined}>
+                      {sel ? ICON.pointer : " "} 
                     </Text>
-                  )}
-                </Box>
-                <Box width={11} justifyContent="flex-end">
-                  <Text color={COLOR.alt}>{formatSpeed(t.downloadSpeedBps)}</Text>
-                </Box>
-                <Box width={6} justifyContent="flex-end">
-                  <Text color={COLOR.dim}>{formatEta(t.etaSeconds)}</Text>
-                </Box>
-                <Box width={11} justifyContent="flex-end">
-                  <Text color={COLOR.alt}> {formatBytes(t.sizeBytes)}</Text>
-                </Box>
-              </Box>
-            );
+                    <Text color={sel ? COLOR.text : g.color} backgroundColor={sel ? COLOR.selected : undefined}>
+                      {g.icon} 
+                    </Text>
+                   <Box width={nameW}>
+                     <Text
+                       color={sel ? COLOR.text : COLOR.alt}
+                       backgroundColor={sel ? COLOR.selected : undefined}
+                       wrap="truncate-end"
+                     >
+                       {truncate(
+                         `${expandedId === t.id ? `${ICON.down} ` : busy ? `${ICON.down} ` : ""}${cleanText(t.name)}`,
+                         nameW,
+                       ).padEnd(nameW)}
+                     </Text>
+                   </Box>
+                   <Box width={13}>
+                      {t.status === "done" ? (
+                        <Text color={sel ? COLOR.text : COLOR.good} backgroundColor={sel ? COLOR.selected : undefined}>
+                          {g.label.padEnd(13)}
+                        </Text>
+                      ) : t.status === "error" ? (
+                        <Text color={sel ? COLOR.text : COLOR.bad} backgroundColor={sel ? COLOR.selected : undefined}>
+                          {g.label.padEnd(13)}
+                        </Text>
+                      ) : (
+                        <Text color={sel ? COLOR.text : g.color} backgroundColor={sel ? COLOR.selected : undefined}>
+                          {`${progressBar(t.progress, 7)} ${Math.round(t.progress * 100)}%`.padEnd(13)}
+                        </Text>
+                     )}
+                    </Box>
+                    <Box width={11} justifyContent="flex-end">
+                      <Text color={sel ? COLOR.text : COLOR.alt} backgroundColor={sel ? COLOR.selected : undefined}>
+                        {formatSpeed(t.downloadSpeedBps).padStart(11)}
+                      </Text>
+                    </Box>
+                    <Box width={6} justifyContent="flex-end">
+                      <Text color={sel ? COLOR.text : COLOR.dim} backgroundColor={sel ? COLOR.selected : undefined}>
+                        {formatEta(t.etaSeconds).padStart(6)}
+                      </Text>
+                    </Box>
+                    <Box width={11} justifyContent="flex-end">
+                      <Text color={sel ? COLOR.text : COLOR.alt} backgroundColor={sel ? COLOR.selected : undefined}>
+                        {formatBytes(t.sizeBytes).padStart(11)}
+                      </Text>
+                    </Box>
+                 </Box>
+                 {expandedId === t.id ? (
+                   t.files.map((file, fileIndex) => (
+                     <Box key={`${t.id}-${file.id}`} marginLeft={4}>
+                       <Text color={fileIndex === fileCursor ? COLOR.accent : COLOR.dim}>
+                         {fileIndex === fileCursor ? ICON.pointer : " "} 
+                       </Text>
+                       <Box width={Math.max(20, nameW - 5)}>
+                         <Text color={fileIndex === fileCursor ? COLOR.text : COLOR.alt} wrap="truncate-end">
+                           {truncate(cleanText(file.name), Math.max(20, nameW - 5))}
+                         </Text>
+                       </Box>
+                       <Text color={COLOR.dim}> {formatBytes(file.sizeBytes)}</Text>
+                     </Box>
+                   ))
+                 ) : null}
+               </Box>
+             );
           })
         )}
       </Box>
@@ -333,9 +429,11 @@ export function ProviderTransfers({
           flexDirection="column"
         >
           <Text color={COLOR.accent}>
-            Download from {truncate(cleanText(picker.transfer.name), Math.max(20, cols - 28))}
+            {picker.action === "copy" ? "Copy link from" : "Download from"} {truncate(cleanText(picker.transfer.name), Math.max(20, cols - 28))}
           </Text>
-          {[{ id: "*", name: `Download all (${picker.transfer.files.length} files)`, sizeBytes: 0, selected: true } as TransferFile, ...picker.transfer.files]
+          {(picker.action === "download"
+            ? [{ id: "*", name: `Download all (${picker.transfer.files.length} files)`, sizeBytes: 0, selected: true } as TransferFile, ...picker.transfer.files]
+            : picker.transfer.files)
             .slice(0, 8)
             .map((f, i) => {
               const sel = i === picker.cursor;
@@ -353,7 +451,7 @@ export function ProviderTransfers({
                 </Box>
               );
             })}
-          <Text color={COLOR.dim}>{"\u2191\u2193"} select · enter download · esc cancel</Text>
+          <Text color={COLOR.dim}>{"\u2191\u2193"} select · enter {picker.action === "copy" ? "copy link" : "download"} · esc cancel</Text>
         </Box>
       ) : null}
 
@@ -372,6 +470,7 @@ export function ProviderTransfers({
             {ICON.dot} {statusGlyph(current.status).label}
             {current.hash ? ` · ${current.hash.slice(0, 12)}` : ""}
             {current.files.length ? ` · ${current.files.length} file${current.files.length === 1 ? "" : "s"}` : ""}
+            {expanded ? " · ↑↓ select file · l download · y copy · e close" : ""}
           </Text>
         </Box>
       ) : null}

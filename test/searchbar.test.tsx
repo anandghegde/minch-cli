@@ -49,10 +49,12 @@ describe("SearchBar caret", () => {
   });
 
   it("backspaces at the caret, not only the last character", async () => {
-    const { lastFrame, stdin, unmount } = render(createElement(Harness));
+    const { lastFrame, stdin, unmount } = render(
+      createElement(Harness, { initial: "abcde" }),
+    );
     await settle();
 
-    // hello█ → left twice → hel█lo → backspace → he█lo
+    // abcde█ → left twice → abc█de → backspace → ab█de
     stdin.write(LEFT);
     stdin.write(LEFT);
     await settle();
@@ -60,16 +62,31 @@ describe("SearchBar caret", () => {
     await settle();
 
     const text = queryText(lastFrame() ?? "");
-    expect(text).toContain("helo");
+    expect(text).toContain("abde");
+    expect(text).not.toContain("abcde");
+    unmount();
+  });
+
+  it("backspaces the last character with the DEL byte used by terminals", async () => {
+    const { lastFrame, stdin, unmount } = render(createElement(Harness));
+    await settle();
+
+    stdin.write(BACKSPACE);
+    await settle();
+
+    const text = queryText(lastFrame() ?? "");
+    expect(text).toContain("hell");
     expect(text).not.toContain("hello");
     unmount();
   });
 
   it("forward-deletes the character after the caret", async () => {
-    const { lastFrame, stdin, unmount } = render(createElement(Harness));
+    const { lastFrame, stdin, unmount } = render(
+      createElement(Harness, { initial: "abcde" }),
+    );
     await settle();
 
-    // hello█ → left 3 → he█llo → delete → he█lo
+    // abcde█ → left 3 → ab█cde → delete → ab█de
     stdin.write(LEFT);
     stdin.write(LEFT);
     stdin.write(LEFT);
@@ -78,8 +95,8 @@ describe("SearchBar caret", () => {
     await settle();
 
     const text = queryText(lastFrame() ?? "");
-    expect(text).toContain("helo");
-    expect(text).not.toContain("hello");
+    expect(text).toContain("abde");
+    expect(text).not.toContain("abcde");
     unmount();
   });
 

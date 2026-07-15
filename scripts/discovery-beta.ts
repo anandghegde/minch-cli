@@ -234,7 +234,7 @@ function uniqueTargets(
   const config = skipBluray
     ? { ...defaultConfig, discovery: { disabledSources: ["bluray" as const] } }
     : defaultConfig;
-  const targets = (["trending", "ott", "bluray", "india"] as const)
+  const targets = (["trending", "ott", "bluray"] as const)
     .flatMap((feed) => buildDiscoveryLoadTargets(
       config,
       feed,

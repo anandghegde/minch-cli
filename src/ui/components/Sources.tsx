@@ -127,31 +127,40 @@ export function Sources({ active }: { active: boolean }) {
           const g = statusGlyph(enabled, health?.ok, s.requiresConfig);
           const sel = idx === cursor;
           return (
-            <Box key={row.id}>
-              <Text color={sel ? COLOR.accent : COLOR.dim}>
+            <Box key={row.id} width={cols}>
+              <Text color={sel ? COLOR.accent : COLOR.dim} backgroundColor={sel ? COLOR.selected : undefined}>
                 {sel ? ICON.pointer : " "}{" "}
               </Text>
-              <Text color={g.color}>{g.icon} </Text>
+              <Text color={sel ? COLOR.text : g.color} backgroundColor={sel ? COLOR.selected : undefined}>
+                {g.icon} 
+              </Text>
               <Box width={nameW}>
-                <Text color={sel ? COLOR.text : COLOR.alt} wrap="truncate-end">
-                  {truncate(s.label, nameW)}
+                <Text
+                  color={sel ? COLOR.text : COLOR.alt}
+                  backgroundColor={sel ? COLOR.selected : undefined}
+                  wrap="truncate-end"
+                >
+                  {truncate(s.label, nameW).padEnd(nameW)}
                 </Text>
               </Box>
               <Box width={9}>
-                <Text color={COLOR.dim}>{s.kind}</Text>
+                <Text color={sel ? COLOR.text : COLOR.dim} backgroundColor={sel ? COLOR.selected : undefined}>
+                  {s.kind.padEnd(9)}
+                </Text>
               </Box>
               <Box width={12}>
-                <Text color={g.color}>{g.text}</Text>
+                <Text color={sel ? COLOR.text : g.color} backgroundColor={sel ? COLOR.selected : undefined}>
+                  {g.text.padEnd(12)}
+                </Text>
               </Box>
               <Box width={8} justifyContent="flex-end">
-                <Text color={COLOR.dim}>
-                  {health?.latency != null ? formatLatency(health.latency) : ""}
+                <Text color={sel ? COLOR.text : COLOR.dim} backgroundColor={sel ? COLOR.selected : undefined}>
+                  {(health?.latency != null ? formatLatency(health.latency) : "").padStart(8)}
                 </Text>
               </Box>
               {s.links.length > 1 ? (
-                <Text color={COLOR.dim}>
-                  {" "}
-                  [{s.links.indexOf(mirror) + 1}/{s.links.length}]
+                <Text color={sel ? COLOR.text : COLOR.dim} backgroundColor={sel ? COLOR.selected : undefined}>
+                  {` [${s.links.indexOf(mirror) + 1}/${s.links.length}]`}
                 </Text>
               ) : null}
             </Box>

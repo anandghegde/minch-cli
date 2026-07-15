@@ -61,18 +61,22 @@ time and never enabled.
   `preferQuality` folds release quality into the default cascade after seeders;
   `strictAnd` and `hideTrash` seed the session filters on boot.
 - **Release discovery.** The Discover tab separates weekly Trending titles,
-  recent/upcoming India OTT changes, Blu-ray/4K claims, and a combined India
-  feed. Filter by date window, provider, original/audio language, media type,
+  recent/upcoming India OTT changes, Blu-ray/4K claims, India OTT charts, and a
+  Letterboxd community feed. Filter by date window, provider, original/audio language, media type,
   format, or Indian title origin, then press `s` to search the selected clean
   title and year. Discovery uses its own normalized cache and never pretends
   release records are torrents.
+- **India OTT popularity.** The Discover tab's Popular feed can use the
+  `moving_beacon-owner1/streaming-catalog-scraper` Apify Actor in `popular` mode
+  for India/provider-filtered catalog rankings. Results are source-claimed
+  popularity signals, not official viewership numbers.
 
 ## Usage
 
 ```
 minch                  open the search TUI
 minch "ubuntu 24.04"   open and run an initial search
-minch --discovery-status  show local discovery request usage and limits
+minch --discovery-status  show local discovery and rating status/limits
 minch --version        print the version
 minch --help           show help
 ```
@@ -164,6 +168,9 @@ unknown dates and regions instead of substituting observation time or guessing.
   links for the restricted RSS pilot. RSS rows have unknown region unless the
   source explicitly says otherwise; generic TMDB physical records are not
   relabeled as Blu-ray.
+- Exact ratings can optionally use the user-device IMDb dataset or a user-owned
+  MDBList key. **Information courtesy of IMDb (https://www.imdb.com). Used with permission.** TMDB and blended fallbacks remain explicitly labeled; `NR`
+  means no trustworthy rating was available, not zero.
 
 TMDB developer access is limited to qualifying **non-commercial** use. Before
 minch-cli or a downstream distribution becomes revenue-generating, revisit all

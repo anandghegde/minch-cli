@@ -92,6 +92,7 @@ describe("India recent Streaming Availability changes", () => {
           w720: "https://images.example.test/backdrop.jpg",
         },
       },
+      rating: 82,
     });
     const calls: URL[] = [];
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
@@ -137,6 +138,13 @@ describe("India recent Streaming Availability changes", () => {
         verticalPoster: "https://images.example.test/poster.jpg",
         horizontalBackdrop: "https://images.example.test/backdrop.jpg",
       },
+      ratings: [{
+        system: "aggregate",
+        provider: "streaming-availability",
+        value: 82,
+        scale: 100,
+        observedAt: NOW,
+      }],
     });
     expect(snapshot.events).toHaveLength(5);
     expect(snapshot.events.map((event) => event.providerId)).toEqual([

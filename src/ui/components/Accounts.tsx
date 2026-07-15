@@ -88,30 +88,46 @@ export function Accounts({ active }: { active: boolean }) {
           const auth = debridAuth[p.id];
           const configured = p.isConfigured();
           return (
-            <Box key={p.id} flexDirection="column" marginTop={i === 0 ? 0 : 1}>
+            <Box
+              key={p.id}
+              flexDirection="column"
+              marginTop={i === 0 ? 0 : 1}
+              width={cols}
+            >
               <Box>
-                <Text color={sel ? COLOR.accent : COLOR.dim}>
+                <Text color={sel ? COLOR.accent : COLOR.dim} backgroundColor={sel ? COLOR.selected : undefined}>
                   {sel ? ICON.pointer : " "}{" "}
                 </Text>
                 <Box width={14}>
-                  <Text color={sel ? COLOR.text : COLOR.alt}>{p.label}</Text>
+                  <Text
+                    color={sel ? COLOR.text : COLOR.alt}
+                    backgroundColor={sel ? COLOR.selected : undefined}
+                  >
+                    {p.label.padEnd(14)}
+                  </Text>
                 </Box>
                 {configured && rk.key ? (
-                  <Text color={COLOR.good}>
+                  <Text color={sel ? COLOR.text : COLOR.good} backgroundColor={sel ? COLOR.selected : undefined}>
                     {ICON.done} {maskKey(rk.key)}{" "}
-                    <Text color={COLOR.dim}>({rk.source})</Text>
+                    <Text color={sel ? COLOR.text : COLOR.dim}>({rk.source})</Text>
                   </Text>
                 ) : (
-                  <Text color={COLOR.warn}>{ICON.warn} no key</Text>
+                  <Text color={sel ? COLOR.text : COLOR.warn} backgroundColor={sel ? COLOR.selected : undefined}>
+                    {ICON.warn} no key
+                  </Text>
                 )}
               </Box>
               <Box marginLeft={3}>
                 {auth?.checking ? (
-                  <Text color={COLOR.dim}>verifying…</Text>
+                  <Text color={sel ? COLOR.text : COLOR.dim} backgroundColor={sel ? COLOR.selected : undefined}>
+                    verifying…
+                  </Text>
                 ) : auth?.error ? (
-                  <Text color={COLOR.bad}>{truncate(auth.error, cols - 12)}</Text>
+                  <Text color={sel ? COLOR.text : COLOR.bad} backgroundColor={sel ? COLOR.selected : undefined}>
+                    {truncate(auth.error, cols - 12)}
+                  </Text>
                 ) : auth?.info ? (
-                  <Text color={COLOR.good}>
+                  <Text color={sel ? COLOR.text : COLOR.good} backgroundColor={sel ? COLOR.selected : undefined}>
                     {[
                       auth.info.plan ? `plan: ${auth.info.plan}` : undefined,
                       auth.info.email,
@@ -121,7 +137,7 @@ export function Accounts({ active }: { active: boolean }) {
                       .join(" · ") || "verified"}
                   </Text>
                 ) : (
-                  <Text color={COLOR.dim}>
+                  <Text color={sel ? COLOR.text : COLOR.dim} backgroundColor={sel ? COLOR.selected : undefined}>
                     {configured ? "press c to verify" : "press e to add a key"}
                   </Text>
                 )}
