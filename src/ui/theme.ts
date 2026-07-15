@@ -7,6 +7,7 @@ export const COLOR = {
   bad: "#fb7185",
   bright: "#bae6fd",
   dim: "#5b6673",
+  selected: "#243746",
 } as const;
 
 export const ICON = {

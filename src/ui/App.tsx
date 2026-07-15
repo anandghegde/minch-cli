@@ -696,7 +696,9 @@ export function App({
         });
         return;
       }
-      if (input === "/" || input === "i") {
+      // `/` always focuses search. `i` focuses search everywhere except Discover,
+      // where it cycles min IMDb rating (see Discover.tsx).
+      if (input === "/" || (input === "i" && view !== "trending")) {
         logEvent("debug", "ui.input.action", { action: "search.focus", view, key: input });
         focusSearch();
         return;
@@ -758,11 +760,14 @@ export function App({
             { keys: "\u2191\u2193", label: "Move" },
             { keys: "\u2190\u2192", label: "Feed" },
             { keys: "m", label: "Type" },
-            { keys: "p", label: "Provider" },
+            { keys: "o", label: "Sort" },
+            { keys: "y", label: "Year" },
+            { keys: "i", label: "IMDb" },
+            { keys: "v", label: "Votes" },
+            { keys: "x", label: "Reset" },
             { keys: "l", label: "Language" },
-            { keys: "t", label: "Window" },
             { keys: "enter", label: "Details" },
-            { keys: "s", label: "Search torrents" },
+            { keys: "s", label: "Search" },
             { keys: "r", label: "Refresh" },
             tabHint,
             { keys: "?", label: "Keys" },

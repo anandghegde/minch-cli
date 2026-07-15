@@ -387,7 +387,7 @@ function DiscoveryEmpty({
   const failures = [...new Set(model.sourceStates.flatMap(({ label, state }) =>
     state.error?.message ? [`${label}: ${state.error.message}`] : []))];
   const message = reason === "filters"
-    ? "Filters removed all discovery rows; adjust type, window, provider, language, or format."
+    ? "Filters removed all discovery rows; adjust type, year, language, IMDb, or press x to reset."
     : reason === "offline-no-cache"
       ? "Sources are offline or unavailable and there is no cached discovery data."
       : reason === "quota-no-cache"
@@ -743,9 +743,13 @@ export function DiscoveryContent({
           {screen.feed === "ott" || screen.feed === "popular" || screen.feed === "charts" ? ` · ${providerLabel}` : ""}
           {screen.languageCode ? ` · ${languageChoice.label}` : ""}
           {screen.yearFilter !== "all" ? ` · ${DISCOVERY_YEAR_FILTER_LABELS[screen.yearFilter]}` : ""}
-          {screen.minImdbRating !== undefined ? ` · IMDb ≥${screen.minImdbRating}` : ""}
-          {screen.minImdbVotes !== undefined ? ` · votes ≥${formatVoteCount(screen.minImdbVotes)}` : ""}
-          {screen.sort !== "default" ? ` · sort ${DISCOVERY_SORT_LABELS[screen.sort]}` : ""}
+          {screen.minImdbRating !== undefined
+            ? ` · IMDb ${Number.isInteger(screen.minImdbRating) ? screen.minImdbRating.toFixed(1) : String(screen.minImdbRating)}+`
+            : ""}
+          {screen.minImdbVotes !== undefined
+            ? ` · ${formatVoteCount(screen.minImdbVotes)}+ votes`
+            : ""}
+          {screen.sort !== "default" ? ` · sort: ${DISCOVERY_SORT_LABELS[screen.sort]}` : ""}
         </Text>
       </Box>
 
